@@ -219,7 +219,11 @@ func rawTimerLines(p Properties) []string {
 func CalendarsOf(p Properties) []string {
 	var out []string
 	for _, value := range p.All("TimersCalendar") {
-		if expression, ok := braceField(value, "OnCalendar="); ok {
+		// A blank expression is dropped rather than kept as an empty string:
+		// it would otherwise become a schedule the list prints as nothing at
+		// all, where the honest answer is the "—" a timer with no calendar
+		// gets.
+		if expression, ok := braceField(value, "OnCalendar="); ok && expression != "" {
 			out = append(out, expression)
 		}
 	}
