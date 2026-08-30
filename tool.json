@@ -124,7 +124,11 @@
           "impact": "a timer in your own manager is read through `systemctl --user`, which needs a user bus; over a serial console or a bare `sudo -i` shell there is none, and the tool says the user timers were not read rather than that there are none"
         }
       ],
-      "tested": []
+      "tested": [
+        "255",
+        "259",
+        "261"
+      ]
     },
     {
       "name": "cron",

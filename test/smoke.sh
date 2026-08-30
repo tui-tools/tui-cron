@@ -206,9 +206,15 @@ esac
 
 # 6. The counts add up: every kind is reported, and their sum is the total. A
 #    script asserting on one of them needs the others to be there to compare.
+#
+#    The sum is added up in awk rather than piped to `bc`. bc is not a given:
+#    Ubuntu ships it, and neither Fedora Cloud Base nor Omarchy Server has it,
+#    so the original `paste -sd+ | bc` printed "command not found" and made this
+#    assertion fail on two of the lab's three machines for a reason that had
+#    nothing to do with the tool. awk is in every base image there is.
 total=$(sed -n 's/.*"jobs": \([0-9]*\).*/\1/p' <<<"$report" | head -1)
 sum=$(sed -n '/"counts": {/,/}/p' <<<"$report" |
-  sed -n 's/.*: \([0-9]*\),*$/\1/p' | paste -sd+ | bc)
+  sed -n 's/.*: \([0-9]*\),*$/\1/p' | awk '{n += $1} END {print n + 0}')
 if [[ -n $total && $total -eq ${sum:-0} ]]; then
   printf 'PASS  the %s jobs are accounted for across the five kinds\n' "$total"
   pass=$((pass + 1))

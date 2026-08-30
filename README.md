@@ -27,7 +27,7 @@ style.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-cron/releases/download/v{version}/tui-cron_{version}_linux_amd64.tar.gz | tar -xz tui-cron
+curl -fsSL https://github.com/tui-tools/tui-cron/releases/download/v0.1.0/tui-cron_0.1.0_linux_amd64.tar.gz | tar -xz tui-cron
 sudo install -m0755 tui-cron /usr/local/bin/tui-cron
 ```
 
@@ -438,7 +438,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `systemctl` |
 | Version read with | `systemctl --version` |
 | Minimum | 245 |
-| Tested | none yet |
+| Tested | `255`, `259`, `261` |
 | Version-gated features | `timers-json` (since 250) |
 
 | Versions | What changes |
