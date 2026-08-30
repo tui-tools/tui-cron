@@ -156,7 +156,7 @@
         },
         {
           "range": ">=1",
-          "impact": "a machine with no cron may still carry run-parts scripts: Omarchy Server ships /etc/cron.hourly/snapper and nothing that walks the directory. Those scripts are listed, because a file that looks scheduled and never runs is worth seeing, and each row says that nothing runs it rather than reporting it as active"
+          "impact": "a machine with no cron may still carry run-parts scripts: Omarchy Server ships /etc/cron.hourly/snapper and nothing that walks the directory. They are listed anyway, and each row says nothing runs it rather than showing a file that looks scheduled as active"
         }
       ],
       "tested": []

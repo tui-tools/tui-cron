@@ -462,7 +462,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | `>=1` | there is no portable way to have cron check a table: cronie ships `crontab -T`, Debian's cron ships nothing equivalent. A line is therefore parsed by this tool before it is written, with the same check on every machine |
 | `>=1` | cron records that a command started, and cronie also that it returned; neither records an exit status anywhere. A cron job's last result is therefore "it ran" at best, and the screen says so rather than implying it worked |
 | `>=1` | a machine may have no cron at all — Omarchy Server is one — and that is a normal machine, not a failure: the timers are listed, and cron reports itself as absent with the reason |
-| `>=1` | a machine with no cron may still carry run-parts scripts: Omarchy Server ships /etc/cron.hourly/snapper and nothing that walks the directory. Those scripts are listed, because a file that looks scheduled and never runs is worth seeing, and each row says that nothing runs it rather than reporting it as active |
+| `>=1` | a machine with no cron may still carry run-parts scripts: Omarchy Server ships /etc/cron.hourly/snapper and nothing that walks the directory. They are listed anyway, and each row says nothing runs it rather than showing a file that looks scheduled as active |
 
 The tested versions are generated from `compat/results.jsonl`, which the tool's
 own smoke test appends to when it runs against a real machine in
