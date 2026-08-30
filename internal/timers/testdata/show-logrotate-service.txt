@@ -1,0 +1,10 @@
+Result=success
+ExecMainExitTimestamp=Sun 2026-08-30 00:09:19 -03
+ExecMainStatus=0
+ExecStart={ path=/usr/sbin/logrotate ; argv[]=/usr/sbin/logrotate /etc/logrotate.conf ; ignore_errors=no ; start_time=[Sun 2026-08-30 00:09:19 -03] ; stop_time=[Sun 2026-08-30 00:09:19 -03] ; pid=4106584 ; code=exited ; status=0 }
+Id=logrotate.service
+Description=Rotate log files
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=/usr/lib/systemd/system/logrotate.service

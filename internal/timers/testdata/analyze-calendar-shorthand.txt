@@ -1,0 +1,17 @@
+  Original form: daily
+Normalized form: *-*-* 00:00:00
+    Next elapse: Mon 2026-08-31 00:00:00 -03
+       (in UTC): Mon 2026-08-31 03:00:00 UTC
+       From now: 23h left
+   Iteration #2: Tue 2026-09-01 00:00:00 -03
+       (in UTC): Tue 2026-09-01 03:00:00 UTC
+       From now: 1 day 23h left
+   Iteration #3: Wed 2026-09-02 00:00:00 -03
+       (in UTC): Wed 2026-09-02 03:00:00 UTC
+       From now: 2 days left
+   Iteration #4: Thu 2026-09-03 00:00:00 -03
+       (in UTC): Thu 2026-09-03 03:00:00 UTC
+       From now: 3 days left
+   Iteration #5: Fri 2026-09-04 00:00:00 -03
+       (in UTC): Fri 2026-09-04 03:00:00 UTC
+       From now: 4 days left

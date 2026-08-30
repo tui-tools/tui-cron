@@ -1,0 +1,14 @@
+Unit=logrotate.service
+TimersCalendar={ OnCalendar=*-*-* 00:00:00 ; next_elapse=Mon 2026-08-31 00:00:00 -03 }
+NextElapseUSecRealtime=Mon 2026-08-31 00:14:26 -03
+LastTriggerUSec=Sun 2026-08-30 00:09:19 -03
+AccuracyUSec=1min
+RandomizedDelayUSec=1h
+Persistent=yes
+Id=logrotate.timer
+Description=Daily rotation of log files
+LoadState=loaded
+ActiveState=active
+SubState=waiting
+FragmentPath=/usr/lib/systemd/system/logrotate.timer
+UnitFileState=enabled

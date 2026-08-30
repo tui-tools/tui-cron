@@ -1,0 +1,9 @@
+fstrim.timer                 loaded active waiting Discard unused filesystem blocks once a week
+logrotate.timer              loaded active waiting Daily rotation of log files
+plocate-updatedb.timer       loaded active waiting Update the plocate database daily
+raid-check.timer             loaded active waiting Weekly RAID setup health check
+sysstat-collect.timer        loaded active waiting Run system activity accounting tool every 10 minutes
+sysstat-rotate.timer         loaded active waiting Rotate daily system activity data file at midnight
+sysstat-summary.timer        loaded active waiting Generate summary of yesterday's process accounting
+systemd-tmpfiles-clean.timer loaded active waiting Daily Cleanup of Temporary Directories
+unbound-anchor.timer         loaded active waiting daily update of the root trust anchor for DNSSEC

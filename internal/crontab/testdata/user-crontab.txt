@@ -1,0 +1,9 @@
+SHELL=/bin/bash
+MAILTO=ana
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Queue watchdog, added when the March incident happened.
+*/5 * * * * /usr/local/bin/check-queue
+@reboot /usr/local/bin/warm-cache
+# 0 3 * * * /usr/local/bin/retired-job
+30 4 * * mon-fri /usr/local/bin/report --daily >> /var/log/report.log 2>&1

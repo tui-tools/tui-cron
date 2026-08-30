@@ -1,0 +1,13 @@
+Unit=dnf-makecache.service
+TimersMonotonic={ OnUnitInactiveUSec=3h ; next_elapse=0 }
+TimersMonotonic={ OnBootUSec=10min ; next_elapse=0 }
+NextElapseUSecRealtime=
+LastTriggerUSec=
+Persistent=no
+Id=dnf-makecache.timer
+Description=dnf5 makecache
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=/usr/lib/systemd/system/dnf-makecache.timer
+UnitFileState=disabled

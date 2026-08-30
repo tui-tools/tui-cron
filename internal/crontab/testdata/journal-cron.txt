@@ -1,0 +1,40 @@
+2026-08-29T09:01:00-03:00 demo CROND[2462517]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T09:01:00-03:00 demo CROND[2462516]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T10:01:00-03:00 demo CROND[2611659]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T10:01:00-03:00 demo run-parts[2611662]: (/etc/cron.hourly) starting 0anacron
+2026-08-29T10:01:00-03:00 demo CROND[2611658]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T11:01:00-03:00 demo CROND[2616944]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T11:01:00-03:00 demo run-parts[2616953]: (/etc/cron.hourly) finished 0anacron
+2026-08-29T11:01:00-03:00 demo CROND[2616943]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T12:01:00-03:00 demo CROND[2777873]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T12:01:01-03:00 demo CROND[2777872]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T13:01:00-03:00 demo CROND[2788707]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T13:01:00-03:00 demo CROND[2788706]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T14:01:00-03:00 demo CROND[2903770]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T14:01:00-03:00 demo CROND[2903769]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T15:01:00-03:00 demo CROND[3026616]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T15:01:00-03:00 demo run-parts[3026625]: (/etc/cron.hourly) finished 0anacron
+2026-08-29T15:01:00-03:00 demo CROND[3026615]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T16:01:00-03:00 demo CROND[3133143]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T16:01:00-03:00 demo CROND[3133142]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T17:01:00-03:00 demo CROND[3368062]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T18:01:00-03:00 demo CROND[3522774]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T18:01:00-03:00 demo CROND[3522773]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T19:01:00-03:00 demo CROND[3690716]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T19:01:00-03:00 demo CROND[3690715]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T20:01:00-03:00 demo CROND[3834594]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T20:01:00-03:00 demo run-parts[3834603]: (/etc/cron.hourly) finished 0anacron
+2026-08-29T20:01:00-03:00 demo CROND[3834593]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T21:01:00-03:00 demo CROND[3880183]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T21:01:00-03:00 demo run-parts[3880186]: (/etc/cron.hourly) starting 0anacron
+2026-08-29T21:01:00-03:00 demo CROND[3880182]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T22:01:00-03:00 demo CROND[3915980]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T22:01:00-03:00 demo run-parts[3915983]: (/etc/cron.hourly) starting 0anacron
+2026-08-29T22:01:00-03:00 demo run-parts[3915989]: (/etc/cron.hourly) finished 0anacron
+2026-08-29T22:01:00-03:00 demo CROND[3915979]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-29T23:01:00-03:00 demo CROND[4026978]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-29T23:01:00-03:00 demo CROND[4026977]: (root) CMDEND (run-parts /etc/cron.hourly)
+2026-08-30T00:01:00-03:00 demo CROND[4086759]: (root) CMD (run-parts /etc/cron.hourly)
+2026-08-30T00:01:00-03:00 demo anacron[4086772]: Anacron started on 2026-08-30
+2026-08-30T00:01:00-03:00 demo anacron[4086772]: Normal exit (0 jobs run)
+2026-08-30T00:01:00-03:00 demo CROND[4086758]: (root) CMDEND (run-parts /etc/cron.hourly)

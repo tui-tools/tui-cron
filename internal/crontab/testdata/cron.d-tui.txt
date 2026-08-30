@@ -1,0 +1,5 @@
+# A file a package dropped here, with the extra user field.
+SHELL=/bin/bash
+MAILTO=root
+*/10 * * * * root /usr/local/bin/collect-metrics
+0 2 * * 0 backup /usr/local/bin/weekly-prune
