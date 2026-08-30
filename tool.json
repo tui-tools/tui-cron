@@ -153,6 +153,10 @@
         {
           "range": ">=1",
           "impact": "a machine may have no cron at all — Omarchy Server is one — and that is a normal machine, not a failure: the timers are listed, and cron reports itself as absent with the reason"
+        },
+        {
+          "range": ">=1",
+          "impact": "a machine with no cron may still carry run-parts scripts: Omarchy Server ships /etc/cron.hourly/snapper and nothing that walks the directory. Those scripts are listed, because a file that looks scheduled and never runs is worth seeing, and each row says that nothing runs it rather than reporting it as active"
         }
       ],
       "tested": []

@@ -299,6 +299,43 @@ func TestFilterLog(t *testing.T) {
 	}
 }
 
+// TestCronieStartupLinesAreNotOutcomes.
+//
+// The first journal a cron machine has is the one this fixture holds: cronie
+// announcing itself, and nothing else. Captured from the tui-lab Fedora 44
+// guest on its first boot with cronie installed — the first time the family's
+// crond path ran on a real machine rather than against a reconstruction.
+//
+// Every line in it names CRON and none of them is a job. A parser that keyed
+// on the daemon's name rather than on the `CMD (` marker would read four
+// outcomes out of a machine where nothing has run yet, and would stamp them on
+// whichever job sorted first. The right answer is no log lines at all, and
+// every job left unknown with a detail saying the log holds nothing for it.
+func TestCronieStartupLinesAreNotOutcomes(t *testing.T) {
+	raw := fixture(t, "journal-crond-fedora44-boot.txt")
+	if !strings.Contains(raw, "(CRON) STARTUP") {
+		t.Fatalf("the capture is not a cronie startup journal")
+	}
+
+	if lines := ParseCronLog(raw); len(lines) != 0 {
+		t.Errorf("a journal with no job in it yielded %d log lines: %v",
+			len(lines), lines)
+	}
+
+	jobs := []schedule.Job{
+		{Kind: schedule.KindCronD, Owner: "root",
+			Command: "run-parts /etc/cron.hourly"},
+	}
+	ApplyCronLog(jobs, ParseCronLog(raw))
+	if jobs[0].Outcome != schedule.OutcomeUnknown {
+		t.Errorf("a job cron has not run yet = %q (%s)",
+			jobs[0].Outcome, jobs[0].OutcomeDetail)
+	}
+	if !jobs[0].Last.IsZero() {
+		t.Errorf("a last run was invented from a startup line: %v", jobs[0].Last)
+	}
+}
+
 // TestCronieVersionFixtureDocumentsWhyThereIsNoVersionCommand.
 //
 // cronie really does answer `crontab -V`, and this capture is its answer on
@@ -320,4 +357,51 @@ func names(jobs []schedule.Job) []string {
 		out = append(out, job.Schedule+" "+job.Command)
 	}
 	return out
+}
+
+// TestRunPartsScriptsOnAMachineWithNoCron.
+//
+// Omarchy Server 4.0.1 ships /etc/cron.hourly/snapper and no cron: no crontab
+// binary, no /etc/crontab, no crond or cron unit. tui-lab found the tool
+// reporting that machine as having no cron jobs at all, because Load returned
+// before it walked the run-parts directories.
+//
+// A run-parts directory needs no daemon to be read, so the script is listed.
+// What it must not be is active: nothing on that machine walks the directory,
+// and the row has to say so rather than let the filesystem's convention stand
+// in for a schedule.
+func TestRunPartsScriptsOnAMachineWithNoCron(t *testing.T) {
+	jobs := []schedule.Job{JobFromAnacronDir("/etc/cron.hourly", "snapper")}
+	markUnrunnable(jobs, schedule.CronState{Installed: false})
+
+	if jobs[0].Active || jobs[0].Enabled {
+		t.Errorf("a script no daemon runs is reported as active")
+	}
+	if jobs[0].State != "installed" {
+		t.Errorf("the file is on disk; State = %q", jobs[0].State)
+	}
+	if !strings.Contains(jobs[0].OutcomeDetail, "no cron on this machine") {
+		t.Errorf("the row does not say why it never runs: %q",
+			jobs[0].OutcomeDetail)
+	}
+	// Explain is what the schedule column shows, so it is the line that must
+	// not read as a promise. The Schedule itself stays: @hourly is what the
+	// directory means, and saying so is how the row explains what is wrong.
+	if jobs[0].Schedule != "@hourly" {
+		t.Errorf("the directory stopped meaning what it means: %q", jobs[0].Schedule)
+	}
+	if !strings.Contains(jobs[0].Explain, "no cron here") {
+		t.Errorf("the schedule column still promises a run: %q", jobs[0].Explain)
+	}
+
+	// On a machine that does have cron, the same script is left alone.
+	running := []schedule.Job{JobFromAnacronDir("/etc/cron.hourly", "0anacron")}
+	markUnrunnable(running, schedule.CronState{Installed: true})
+	if !running[0].Active {
+		t.Errorf("a script on a cron machine was marked unrunnable")
+	}
+	if !strings.Contains(running[0].Explain, "Every hour") {
+		t.Errorf("a script on a cron machine lost its schedule: %q",
+			running[0].Explain)
+	}
 }

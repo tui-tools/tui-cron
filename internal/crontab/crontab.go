@@ -191,10 +191,21 @@ func (b *Backend) Run(ctx context.Context, cmd schedule.Command) (string, error)
 }
 
 // Load reads every cron job on the machine and what cron itself is doing.
+//
+// The run-parts directories are read even when this machine has no cron. They
+// are plain executables on disk, they need no daemon and no `crontab` binary to
+// be listed, and a machine that has one without the other is not hypothetical:
+// Omarchy Server 4.0.1 ships /etc/cron.hourly/snapper and no cron at all, so
+// the script sits there looking scheduled and never runs. Bailing out before
+// this read reported that machine as having nothing, which is the one answer
+// that is wrong — the whole point of listing it is to say it will not fire.
+// markUnrunnable is what says so on each row.
 func (b *Backend) Load(ctx context.Context) ([]schedule.Job, schedule.CronState) {
 	state := b.daemonState(ctx)
 	if b.crontab == nil && !fileExists(SystemCrontab) {
-		return nil, state
+		jobs := b.anacronDirs()
+		markUnrunnable(jobs, state)
+		return jobs, state
 	}
 
 	var jobs []schedule.Job
@@ -204,6 +215,34 @@ func (b *Backend) Load(ctx context.Context) ([]schedule.Job, schedule.CronState)
 
 	b.applyOutcomes(ctx, jobs)
 	return jobs, state
+}
+
+// markUnrunnable rewrites the run-parts jobs found on a machine with no cron.
+//
+// The file is installed, so `State` stays "installed" and it is still worth a
+// row; what is not true of it is that it is active. Nothing on this machine
+// runs /etc/cron.hourly, and a row claiming otherwise would be the tool
+// agreeing with an assumption the filesystem invites rather than reading the
+// machine.
+func markUnrunnable(jobs []schedule.Job, state schedule.CronState) {
+	if state.Installed {
+		return
+	}
+	for i := range jobs {
+		jobs[i].Enabled = false
+		jobs[i].Active = false
+		// The Schedule stays: `@hourly` is what the directory means, and it is
+		// what the file would run at somewhere else. The reading of it does
+		// not stay, because on this machine it reads as a promise. The screen
+		// shows Explain in the schedule column, so this is the line that has
+		// to carry the truth rather than the convention.
+		jobs[i].Explain = "Nothing on this machine runs it: the directory " +
+			"would mean " + jobs[i].Schedule + ", but there is no cron here"
+		jobs[i].NextNote = "there is no cron to run it, so there is no next run"
+		jobs[i].OutcomeDetail = "this script is installed but nothing runs " +
+			"it: there is no cron on this machine, so the run-parts " +
+			"directory it sits in is never walked"
+	}
 }
 
 // daemonState reports whether cron is installed and whether it is running.

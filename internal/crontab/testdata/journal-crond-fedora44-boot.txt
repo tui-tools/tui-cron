@@ -1,0 +1,5 @@
+2026-08-30T04:41:09+00:00 fedora systemd[1]: Started crond.service - Command Scheduler.
+2026-08-30T04:41:09+00:00 fedora crond[1568]: (CRON) STARTUP (1.7.2)
+2026-08-30T04:41:09+00:00 fedora crond[1568]: (CRON) INFO (Syslog will be used instead of sendmail.)
+2026-08-30T04:41:09+00:00 fedora crond[1568]: (CRON) INFO (RANDOM_DELAY will be scaled with factor 7% if used.)
+2026-08-30T04:41:09+00:00 fedora crond[1568]: (CRON) INFO (running with inotify support)

@@ -188,11 +188,58 @@ case "$cron" in
     fi
 
     # /etc/crontab and /etc/cron.d are world readable everywhere, so whatever
-    # job lines they carry must have been read. A machine whose tables hold
-    # only comments — a stock Fedora /etc/crontab is one — legitimately has
-    # none, so the assertion is on the field, not on a count.
-    check "the cron tables were read" "$bin --check" '"cron.d": [0-9]+'
-    check "the crontab of this account was read" "$bin --check" '"crontab": [0-9]+'
+    # job lines they carry must have been read — and the count has to be the
+    # machine's own, not merely present. Asserting only that the field exists
+    # passed on a machine whose tables were never opened, which is what this
+    # suite was doing before Fedora had a cron at all.
+    #
+    # A cron job line begins with a schedule field: a digit, a `*` or an `@`.
+    # Everything else in these files is a comment or a SHELL=/PATH=/MAILTO=
+    # assignment, which is why a stock Fedora /etc/crontab contributes nothing
+    # and its /etc/cron.d/0hourly contributes exactly one. Files whose name
+    # carries a dot are skipped, because run-parts naming is what cron itself
+    # applies to /etc/cron.d and the tool applies the same rule.
+    want_crond=0
+    for table in /etc/crontab /etc/cron.d/*; do
+      [[ -f $table ]] || continue
+      [[ $table == /etc/cron.d/* && $(basename "$table") == *.* ]] && continue
+      want_crond=$((want_crond + $(grep -cE '^[[:space:]]*[0-9*@]' "$table" || true)))
+    done
+    got_crond=$(sed -n 's/.*"cron.d": \([0-9]*\).*/\1/p' <<<"$report" | head -1)
+    if [[ -n $got_crond && $got_crond -eq $want_crond ]]; then
+      printf 'PASS  /etc/crontab and /etc/cron.d parse to %s jobs, matching their job lines\n' "$want_crond"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  the tool reports %s cron.d jobs, the tables carry %s job lines\n' \
+        "${got_crond:-none}" "$want_crond"
+      fail=$((fail + 1))
+    fi
+
+    # This account's own table, read back through cron's interface rather than
+    # by opening /var/spool. On a fresh guest there is none, and cronie answers
+    # `crontab -l` with "no crontab for <user>" on *stderr and exit 1* — which
+    # the backend has to read as an empty table rather than as a failed read.
+    # The assertion is that the count matches whatever `crontab -l` really
+    # holds, which is 0 here, and that the rest of the report survived it.
+    want_crontab=$(crontab -l 2>/dev/null | grep -cE '^[[:space:]]*[0-9*@]' || true)
+    got_crontab=$(sed -n 's/.*"crontab": \([0-9]*\).*/\1/p' <<<"$report" | head -1)
+    if [[ -n $got_crontab && $got_crontab -eq ${want_crontab:-0} ]]; then
+      printf 'PASS  this account crontab parses to %s jobs, matching `crontab -l`\n' "${want_crontab:-0}"
+      pass=$((pass + 1))
+    else
+      printf 'FAIL  the tool reports %s crontab jobs, `crontab -l` holds %s\n' \
+        "${got_crontab:-none}" "${want_crontab:-none}"
+      fail=$((fail + 1))
+    fi
+
+    # cron's log is read as the plain lab user through journalctl, with no
+    # escalation. On a just-booted machine cronie has logged only its own
+    # STARTUP and INFO lines and no job has run yet, so the right answer is
+    # "no line for this job" — the one answer this must never be is the
+    # detail the backend stamps on every job when the read itself failed.
+    check_absent "cron's log was read without escalating" \
+      "$bin --check" \
+      "cron's log could not be read"
     ;;
   absent)
     # No crontab binary: the tool must say so with a reason, and must not
@@ -201,8 +248,61 @@ case "$cron" in
     check "a reason is given" "$bin --check" '"cronDetail": ".+"'
     check "cron is not reported as running" "$bin --check" '"cronRunning": false'
     check "no cron job was invented" "$bin --check" '"cron.d": 0'
+
+    # A machine with no cron can still carry run-parts scripts, and Omarchy
+    # Server does: /etc/cron.hourly/snapper, installed by the image, walked by
+    # nothing. The tool listed none of them until this suite counted, because
+    # the load bailed out before reading the directories. They must be listed —
+    # and each one must say it does not run, which is the only reason listing
+    # it is worth anything on a machine like this.
+    if [[ $(find /etc/cron.hourly /etc/cron.daily /etc/cron.weekly \
+      /etc/cron.monthly -maxdepth 1 -type f ! -name '.*' 2>/dev/null | wc -l) -gt 0 ]]; then
+      check "the run-parts scripts are listed anyway" \
+        "$bin --check" '"anacron-dir": [1-9][0-9]*'
+      check "and each says nothing runs it" \
+        "$bin --check" 'installed but nothing runs it'
+      # The report is pretty-printed, so "this job is anacron-dir AND active"
+      # spans lines and no single grep can express it. awk carries the kind
+      # from each job's own object: "ID" opens one, "Kind" labels it, and
+      # "Active" is read only while that label is the one being looked for.
+      active_dirs=$(awk '
+        /"ID":/          { kind = "" }
+        /"Kind":/        { kind = $2 }
+        /"Active": true/ { if (kind ~ /anacron-dir/) n++ }
+        END              { print n + 0 }
+      ' <<<"$report")
+      if [[ $active_dirs -eq 0 ]]; then
+        printf 'PASS  none of them is reported as active\n'
+        pass=$((pass + 1))
+      else
+        printf 'FAIL  %s run-parts scripts are reported as active on a machine with no cron\n' \
+          "$active_dirs"
+        fail=$((fail + 1))
+      fi
+    fi
     ;;
 esac
+
+# 5b. The run-parts directories, which are a cron machine's other half and are
+#     read by listing rather than by parsing. The count is the machine's own:
+#     Fedora's cronie brings /etc/cron.hourly/0anacron and nothing else,
+#     Debian's cron populates all four, and a machine without cron has none of
+#     the directories at all — so this is one assertion for all three shapes.
+#     Dot-prefixed entries are excluded, which is the rule the tool applies.
+want_anacron=0
+for dir in /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
+  [[ -d $dir ]] || continue
+  want_anacron=$((want_anacron + $(find "$dir" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | wc -l)))
+done
+got_anacron=$(sed -n 's/.*"anacron-dir": \([0-9]*\).*/\1/p' <<<"$report" | head -1)
+if [[ -n $got_anacron && $got_anacron -eq $want_anacron ]]; then
+  printf 'PASS  the cron.* directories parse to %s run-parts scripts, matching the files in them\n' "$want_anacron"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  the tool reports %s run-parts scripts, the directories hold %s\n' \
+    "${got_anacron:-none}" "$want_anacron"
+  fail=$((fail + 1))
+fi
 
 # 6. The counts add up: every kind is reported, and their sum is the total. A
 #    script asserting on one of them needs the others to be there to compare.
