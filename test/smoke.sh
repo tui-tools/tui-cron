@@ -139,6 +139,45 @@ echo "      sudo -n=$privileged"
 
 report=$("$bin" --check 2>&1)
 
+# --- the report block ------------------------------------------------------
+#
+# --report is read-only and unprivileged, so it is smoked without sudo: a user
+# who cannot escalate is exactly the one who most needs to be able to file a
+# usable bug. What is asserted is that it names the backend this machine is
+# being driven through, that it still answers under --demo, and that it keeps
+# its privacy promise — the block goes into a public issue, so a home path or
+# the host name appearing in it is a bug, not a cosmetic detail.
+check "report names the backend" \
+  "$bin --report" \
+  '^backend: host'
+
+check "report says the run was live" \
+  "$bin --report" \
+  '^mode: live$'
+
+check "report works in demo mode too" \
+  "$bin --demo --report" \
+  '^backend: demo$'
+
+check "and says so on the mode line" \
+  "$bin --demo --report" \
+  '^mode: demo'
+
+check "report leaks neither a home path nor the host name" \
+  "$bin --report | grep -cE '/home/|$(uname -n)' || true" \
+  '^0$'
+
+# The schedulers line is this tool's own half of the block: systemd carries a
+# version, cron carries only whether it is here, and the two must agree with
+# what this guest really has.
+check "report names both schedulers" \
+  "$bin --report" \
+  '^schedulers: systemd [0-9]+, cron '
+case "$cron" in
+  present) check "report agrees that cron is here" "$bin --report" 'cron installed' ;;
+  absent) check "report agrees that cron is absent" "$bin --report" 'cron absent' ;;
+esac
+
 # 1. The read path works at all, as the plain lab user, and names the backend it
 #    drove. Reading a timer, a crontab and a journal all take no privileges, so
 #    this running unprivileged is itself the assertion that the tool does not
