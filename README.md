@@ -1,5 +1,7 @@
 <img src="assets/logo.png" alt="tui-cron" width="240">
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tui-tools/tui-cron/badge)](https://scorecard.dev/viewer/?uri=github.com/tui-tools/tui-cron)
+
 Every scheduled job on the machine, on one screen. **systemd timers and cron
 together**, with the schedule written out in English next to the expression that
 produced it, and the **exact command line of every change previewed before it
