@@ -36,7 +36,7 @@ func (a *app) View() string {
 	switch a.mode {
 	case modeConfirm:
 		return a.confirm.View(a.theme, a.width, a.height)
-	case modeFilter:
+	case modeFilter, modeTyped:
 		return a.input.View(a.theme, a.width, a.height)
 	case modePicker:
 		return a.picker.View(a.theme, a.width, a.height)
@@ -651,6 +651,9 @@ func (a *app) actionHint(job schedule.Job) string {
 	switch {
 	case job.Kind == schedule.KindAnacronDir:
 		return "  the directory is the schedule: to change it, move the file"
+	case job.Kind.Systemd() && job.ToolWritten:
+		return "  e changes the schedule or the command · d removes both files · " +
+			"E/D enable · s/x arm · n runs it now"
 	case job.Kind.Systemd():
 		return "  e changes the schedule · E/D enable · s/x arm · n runs it now"
 	default:
@@ -735,6 +738,7 @@ func (a *app) shortHelpKeys() []ui.KeyHint {
 	case screenTimers:
 		hints = append(hints,
 			ui.KeyHint{Key: "e", Desc: "schedule"},
+			ui.KeyHint{Key: "d", Desc: "delete ours"},
 			ui.KeyHint{Key: "n", Desc: "run now"},
 			ui.KeyHint{Key: "E/D", Desc: "enable"})
 	case screenCron:
@@ -766,9 +770,9 @@ func helpKeys() []ui.KeyHint {
 		{Key: "enter", Desc: "open the selected job: its unit or table, the next runs, its log"},
 		{Key: "esc", Desc: "leave the detail screen"},
 		{Key: "/", Desc: "filter this screen (esc clears)"},
-		{Key: "e", Desc: "change when the selected job runs, with a diff to confirm"},
-		{Key: "a", Desc: "add a line to your own crontab"},
-		{Key: "d", Desc: "remove the selected cron line"},
+		{Key: "e", Desc: "change when the selected job runs — and what it runs, for a timer this tool wrote"},
+		{Key: "a", Desc: "add a cron line: your own table, or as root another account's or /etc/cron.d"},
+		{Key: "d", Desc: "remove the selected cron line, or a timer this tool wrote — both its files"},
 		{Key: "c", Desc: "create a systemd timer and its service"},
 		{Key: "t", Desc: "write a timer for the selected cron line, not enabled"},
 		{Key: "E / D", Desc: "enable / disable the selected timer at boot"},
@@ -780,6 +784,8 @@ func helpKeys() []ui.KeyHint {
 		{Key: "", Desc: ""},
 		{Key: "note", Desc: "every change is previewed and confirmed first"},
 		{Key: "note", Desc: "a timer's schedule is changed with a drop-in; its unit file is never rewritten"},
+		{Key: "note", Desc: "only a timer whose files this tool wrote can be deleted or re-pointed; the rest belong to their packages"},
+		{Key: "note", Desc: "deleting a timer asks for its name to be typed, because a removed unit file does not come back"},
 		{Key: "note", Desc: "a crontab is replaced through `crontab <file>`, which is cron's own interface"},
 	}
 }

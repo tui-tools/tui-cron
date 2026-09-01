@@ -473,8 +473,8 @@ func TestAddingACronLineAppendsToYourOwnTable(t *testing.T) {
 	if a.mode != modeForm {
 		t.Fatalf("a did not open the editor (status: %s)", a.status)
 	}
-	a.form.fields[0].input.SetValue("0 3 * * *")
-	a.form.fields[1].input.SetValue("/usr/local/bin/nightly")
+	setText(t, &a.form, fieldSchedule, "0 3 * * *")
+	setText(t, &a.form, fieldCommand, "/usr/local/bin/nightly")
 	drain(t, a, press(a, "enter"))
 
 	if a.mode != modeConfirm {
@@ -738,8 +738,24 @@ func TestRendersAtEveryWidth(t *testing.T) {
 		a.form = newCreateForm(a.caps)
 		checkWidth(t, a, "create form", width)
 
-		a.form = newAddForm("ana")
+		a.form = newAddForm("ana", a.caps)
 		checkWidth(t, a, "add form", width)
+
+		// The add form with a target chosen carries two more fields, and the
+		// longest destination line the tool ever renders.
+		a.form.set(fieldTarget, targetCronD)
+		a.form.retarget()
+		checkWidth(t, a, "add form on /etc/cron.d", width)
+
+		// And the prompt that stands in front of a deletion, which carries the
+		// longest help line.
+		a.mode = modeBrowse
+		selectJob(t, a, screenTimers, "mirror-sync.timer")
+		drain(t, a, press(a, "d"))
+		if a.mode != modeTyped {
+			t.Fatalf("d on a timer this tool wrote did not ask for the name")
+		}
+		checkWidth(t, a, "typed delete prompt", width)
 	}
 }
 
@@ -792,4 +808,267 @@ func setText(t *testing.T, form *jobForm, key, value string) {
 		}
 	}
 	t.Fatalf("the form has no field named %q", key)
+}
+
+// TestDeletingOurOwnTimerAsksForTheNameFirst is the whole shape of the delete
+// path: the unit's name has to be typed before the commands are even shown, and
+// what then runs is the unit unloaded, both files removed, and a daemon-reload.
+func TestDeletingOurOwnTimerAsksForTheNameFirst(t *testing.T) {
+	a, backend := newTestApp(t)
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+
+	drain(t, a, press(a, "d"))
+	if a.mode != modeTyped {
+		t.Fatalf("d did not ask for the name (status: %s)", a.status)
+	}
+	if len(backend.Ran()) != 0 {
+		t.Fatalf("a command ran before anything was confirmed")
+	}
+
+	drain(t, a, press(a, "mirror-sync.timer"))
+	drain(t, a, press(a, "enter"))
+	if a.mode != modeConfirm {
+		t.Fatalf("the typed name did not open the dialog (status: %s)", a.status)
+	}
+	want := []string{
+		"systemctl disable --now mirror-sync.timer",
+		"rm -f -- /etc/systemd/system/mirror-sync.timer",
+		"rm -f -- /etc/systemd/system/mirror-sync.service",
+		"systemctl daemon-reload",
+	}
+	for _, line := range want {
+		if !strings.Contains(a.confirm.Command, line) {
+			t.Errorf("the preview is missing %q:\n%s", line, a.confirm.Command)
+		}
+	}
+	// Both files are diffed away, because what they said is nowhere else once
+	// this runs.
+	for _, unit := range []string{"mirror-sync.timer", "mirror-sync.service"} {
+		if !strings.Contains(a.confirm.Body, unit) {
+			t.Errorf("the diff does not show %s going:\n%s", unit, a.confirm.Body)
+		}
+	}
+
+	drain(t, a, press(a, "y"))
+	for _, job := range a.model.Jobs {
+		if job.Unit == "mirror-sync.timer" {
+			t.Errorf("the timer is still on the machine after the delete ran")
+		}
+	}
+}
+
+// TestATypoDeletesNothing: the prompt is a gate, not a formality.
+func TestATypoDeletesNothing(t *testing.T) {
+	a, backend := newTestApp(t)
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+	drain(t, a, press(a, "d"))
+
+	drain(t, a, press(a, "mirror-sync"))
+	drain(t, a, press(a, "enter"))
+	if a.mode == modeConfirm {
+		t.Fatalf("a name that was not the unit's opened the dialog")
+	}
+	if !strings.Contains(a.status, "mirror-sync.timer") {
+		t.Errorf("status = %q, want it to say what was expected", a.status)
+	}
+	if len(backend.Ran()) != 0 {
+		t.Errorf("a command ran anyway")
+	}
+}
+
+// TestChangingWhatOurOwnTimerRuns writes a drop-in on the service, not on the
+// timer: ExecStart is the service's setting, and the empty assignment in front
+// of it is what stops systemd running the old command as well.
+func TestChangingWhatOurOwnTimerRuns(t *testing.T) {
+	a, backend := newTestApp(t)
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+
+	drain(t, a, press(a, "e"))
+	if a.mode != modeForm {
+		t.Fatalf("e did not open the editor (status: %s)", a.status)
+	}
+	if !a.form.has(fieldCommand) {
+		t.Fatalf("the editor for a timer this tool wrote has no command field")
+	}
+	setText(t, &a.form, fieldCommand, "/usr/local/bin/mirror-sync --quiet")
+	drain(t, a, press(a, "enter"))
+
+	if a.mode != modeConfirm {
+		t.Fatalf("the form did not open a confirm dialog (status: %s)", a.status)
+	}
+	if !strings.Contains(a.confirm.Body,
+		"+ExecStart=\n+ExecStart=/usr/local/bin/mirror-sync --quiet") {
+		t.Errorf("the drop-in does not clear the old command first:\n%s",
+			a.confirm.Body)
+	}
+	if !strings.Contains(a.confirm.Command,
+		"/etc/systemd/system/mirror-sync.service.d/90-tui-cron.conf") {
+		t.Errorf("the change was not written to the service's drop-in:\n%s",
+			a.confirm.Command)
+	}
+	drain(t, a, press(a, "y"))
+
+	for _, cmd := range backend.Ran() {
+		if strings.Contains(cmd.String(), "restart") {
+			t.Errorf("a command change restarted the timer: %q", cmd.String())
+		}
+	}
+	for _, job := range a.model.Jobs {
+		if job.Unit == "mirror-sync.timer" &&
+			job.Command != "/usr/local/bin/mirror-sync --quiet" {
+			t.Errorf("the sample timer still runs %q", job.Command)
+		}
+	}
+}
+
+// TestATimerWeDidNotWriteOffersNoCommandField: re-pointing a unit a package
+// installed is a change that package's next update would silently undo, so the
+// field is absent rather than present and refused.
+func TestATimerWeDidNotWriteOffersNoCommandField(t *testing.T) {
+	a, _ := newTestApp(t)
+	selectJob(t, a, screenTimers, "logrotate.timer")
+	drain(t, a, press(a, "e"))
+	if a.mode != modeForm {
+		t.Fatalf("e did not open the editor (status: %s)", a.status)
+	}
+	if a.form.has(fieldCommand) {
+		t.Errorf("the editor offers to re-point a unit a package installed")
+	}
+}
+
+// TestTheScheduleAndTheCommandAreTwoChanges: they are two drop-ins on two
+// units, and the dialog reviews one file.
+func TestTheScheduleAndTheCommandAreTwoChanges(t *testing.T) {
+	a, backend := newTestApp(t)
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+	drain(t, a, press(a, "e"))
+
+	setText(t, &a.form, fieldSchedule, "*-*-* 05:00:00")
+	setText(t, &a.form, fieldCommand, "/usr/local/bin/mirror-sync --quiet")
+	drain(t, a, press(a, "enter"))
+
+	if a.mode == modeConfirm {
+		t.Fatalf("both files were changed behind one diff")
+	}
+	if !strings.Contains(a.status, "one at a time") {
+		t.Errorf("status = %q, want it to say why", a.status)
+	}
+	if len(backend.Ran()) != 0 {
+		t.Errorf("a command ran anyway")
+	}
+}
+
+// TestAddingToAnotherAccountsTable goes through cron's own interface for
+// somebody else's table, which is `crontab -u`.
+func TestAddingToAnotherAccountsTable(t *testing.T) {
+	a, backend := newTestApp(t)
+	gotoScreen(t, a, screenCron)
+	drain(t, a, press(a, "a"))
+	if !a.form.has(fieldTarget) {
+		t.Fatalf("the add form offers no target on a machine that has all three")
+	}
+
+	a.form.set(fieldTarget, targetUserTable)
+	a.form.retarget()
+	setText(t, &a.form, fieldUser, "root")
+	setText(t, &a.form, fieldSchedule, "0 4 * * *")
+	setText(t, &a.form, fieldCommand, "/usr/local/bin/rotate")
+	drain(t, a, press(a, "enter"))
+
+	if a.mode != modeConfirm {
+		t.Fatalf("the form did not open a confirm dialog (status: %s)", a.status)
+	}
+	if !strings.Contains(a.confirm.Command, "crontab -u root ") {
+		t.Errorf("the table was not replaced through crontab -u:\n%s",
+			a.confirm.Command)
+	}
+	// Replacing somebody else's whole table is the caveat that has to be said
+	// out loud.
+	if !strings.Contains(a.confirm.Body, "whole crontab") {
+		t.Errorf("the dialog does not say whose table is replaced:\n%s",
+			a.confirm.Body)
+	}
+	drain(t, a, press(a, "y"))
+	if len(backend.Ran()) == 0 {
+		t.Fatalf("nothing ran after the confirmation")
+	}
+	var found bool
+	for _, job := range a.model.Jobs {
+		if job.Command == "/usr/local/bin/rotate" && job.Owner == "root" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the line is not in root's table after the reload")
+	}
+}
+
+// TestAddingToCronD installs a file rather than replacing a table, and the line
+// carries the extra user field that format has.
+func TestAddingToCronD(t *testing.T) {
+	a, _ := newTestApp(t)
+	gotoScreen(t, a, screenCron)
+	drain(t, a, press(a, "a"))
+
+	a.form.set(fieldTarget, targetCronD)
+	a.form.retarget()
+	setText(t, &a.form, fieldFile, "nightly-report")
+	setText(t, &a.form, fieldUser, "root")
+	setText(t, &a.form, fieldSchedule, "0 5 * * *")
+	setText(t, &a.form, fieldCommand, "/usr/local/bin/report")
+	drain(t, a, press(a, "enter"))
+
+	if a.mode != modeConfirm {
+		t.Fatalf("the form did not open a confirm dialog (status: %s)", a.status)
+	}
+	if !strings.Contains(a.confirm.Command,
+		"install -m 644 /tmp/tui-cron/nightly-report /etc/cron.d/nightly-report") {
+		t.Errorf("the file was not installed into /etc/cron.d:\n%s",
+			a.confirm.Command)
+	}
+	if !strings.Contains(a.confirm.Body, "+0 5 * * * root /usr/local/bin/report") {
+		t.Errorf("the line carries no user field:\n%s", a.confirm.Body)
+	}
+}
+
+// TestCronDRefusesANameCronWouldIgnore: cron ignores a file in /etc/cron.d
+// whose name contains a dot, so a table saved as backup.cron is a table that
+// silently never runs.
+func TestCronDRefusesANameCronWouldIgnore(t *testing.T) {
+	a, backend := newTestApp(t)
+	gotoScreen(t, a, screenCron)
+	drain(t, a, press(a, "a"))
+
+	a.form.set(fieldTarget, targetCronD)
+	a.form.retarget()
+	setText(t, &a.form, fieldFile, "backup.cron")
+	setText(t, &a.form, fieldUser, "root")
+	setText(t, &a.form, fieldSchedule, "0 5 * * *")
+	setText(t, &a.form, fieldCommand, "/usr/local/bin/report")
+	drain(t, a, press(a, "enter"))
+
+	if a.mode == modeConfirm {
+		t.Fatalf("a file name cron ignores was accepted")
+	}
+	if !strings.Contains(a.status, "never run") {
+		t.Errorf("status = %q, want it to say what would happen", a.status)
+	}
+	if len(backend.Ran()) != 0 {
+		t.Errorf("a command ran anyway")
+	}
+}
+
+// TestWithoutRootTheAddFormHasNoTarget: `crontab -u` and a write into
+// /etc/cron.d are refused to everybody else, so offering them would be offering
+// a dialog that ends in a permission error.
+func TestWithoutRootTheAddFormHasNoTarget(t *testing.T) {
+	caps := jobs.NewFake().Capabilities()
+	caps.SupportsAnyTable = false
+	form := newAddForm("ana", caps)
+	if form.has(fieldTarget) {
+		t.Errorf("a non-root add form offers tables it cannot write")
+	}
+	if !strings.Contains(form.title, "ana") {
+		t.Errorf("form title = %q, want it to name this account's table", form.title)
+	}
 }

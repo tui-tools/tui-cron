@@ -361,3 +361,127 @@ func TestGeneratedCalendarsAreAcceptedBySystemd(t *testing.T) {
 		}
 	}
 }
+
+// TestDisableNowStopsBeforeTheFilesGo pins the first command of a deletion. The
+// unit is unloaded before its files are removed, because a timer left armed
+// with no file behind it is the one state nobody can explain afterwards.
+func TestDisableNowStopsBeforeTheFilesGo(t *testing.T) {
+	cmd, err := BuildDisableNow(systemTimer)
+	if err != nil {
+		t.Fatalf("BuildDisableNow: %v", err)
+	}
+	if got := cmd.String(); got != "systemctl disable --now backup.timer" {
+		t.Errorf("BuildDisableNow = %q", got)
+	}
+	if !cmd.Destructive {
+		t.Errorf("stopping a timer is not marked as a change to read twice")
+	}
+	if _, err := BuildDisableNow(schedule.Job{
+		Kind: schedule.KindCrontab, Name: "ana · check-queue",
+	}); err == nil {
+		t.Errorf("BuildDisableNow accepted a cron line")
+	}
+}
+
+// TestRemoveUnitCanOnlyNameOurOwnDirectory is the guard that matters most on
+// the delete path: the path is assembled here from a checked unit name, so no
+// caller can point rm at a unit a distribution shipped or at anything else.
+func TestRemoveUnitCanOnlyNameOurOwnDirectory(t *testing.T) {
+	cmd, err := BuildRemoveUnit("backup.timer")
+	if err != nil {
+		t.Fatalf("BuildRemoveUnit: %v", err)
+	}
+	if got := cmd.String(); got != "rm -f -- /etc/systemd/system/backup.timer" {
+		t.Errorf("BuildRemoveUnit = %q", got)
+	}
+	for _, unit := range []string{
+		"", "backup", "../../etc/passwd", "/usr/lib/systemd/system/backup.timer",
+		"backup.timer /etc/shadow", "backup.timer\nrm", "..timer",
+	} {
+		if _, err := BuildRemoveUnit(unit); err == nil {
+			t.Errorf("BuildRemoveUnit(%q) built a command", unit)
+		}
+	}
+}
+
+// TestRenderExecDropInResetsTheCommand is the same trick as the schedule
+// drop-in and for the same reason: ExecStart is a list, so a drop-in that only
+// names the new command leaves the service running both, one after the other.
+func TestRenderExecDropInResetsTheCommand(t *testing.T) {
+	content, err := RenderExecDropIn("/usr/local/bin/mirror-sync --verbose")
+	if err != nil {
+		t.Fatalf("RenderExecDropIn: %v", err)
+	}
+	if !strings.Contains(content, "[Service]") {
+		t.Errorf("the drop-in has no [Service] section:\n%s", content)
+	}
+	if !strings.Contains(content,
+		"ExecStart=\nExecStart=/usr/local/bin/mirror-sync --verbose") {
+		t.Errorf("the drop-in does not clear the old command first:\n%s", content)
+	}
+	if !MarkedByTool(content) {
+		t.Errorf("a file this tool wrote carries no marker:\n%s", content)
+	}
+	for _, command := range []string{
+		"", "mirror-sync", "/bin/sh\n[Service]\nUser=root", "/bin/sh [x]",
+	} {
+		if _, err := RenderExecDropIn(command); err == nil {
+			t.Errorf("RenderExecDropIn(%q) built a drop-in", command)
+		}
+	}
+}
+
+// TestGeneratedUnitsCarryTheMarker: the header is not decoration. It is what
+// later tells the tool that this pair of files is one it may remove or
+// re-point, and it is the only thing that does.
+func TestGeneratedUnitsCarryTheMarker(t *testing.T) {
+	service, timer, err := RenderUnits(schedule.NewTimer{
+		Name: "nightly-backup", Calendar: "*-*-* 02:30:00",
+		ExecStart: "/usr/local/bin/backup", Persistent: true,
+	}, "2026-09-01 00:00:00 UTC")
+	if err != nil {
+		t.Fatalf("RenderUnits: %v", err)
+	}
+	for name, text := range map[string]string{
+		"service": service, "timer": timer,
+	} {
+		if !MarkedByTool(text) {
+			t.Errorf("the generated %s carries no marker:\n%s", name, text)
+		}
+	}
+	if MarkedByTool("[Unit]\nDescription=Something a package shipped\n") {
+		t.Errorf("a unit nobody marked was read as ours")
+	}
+}
+
+// TestToolWroteRefusesWhatIsNotOurs covers the cases that need no filesystem at
+// all: a timer in the caller's own manager, a fragment somewhere other than the
+// directory this tool writes to, and a timer that activates nothing.
+func TestToolWroteRefusesWhatIsNotOurs(t *testing.T) {
+	tests := map[string]schedule.Job{
+		"a user timer": {
+			Kind: schedule.KindUserTimer, Unit: "sync-notes.timer",
+			Service: "sync-notes.service",
+			File:    "/home/ana/.config/systemd/user/sync-notes.timer",
+		},
+		"a unit a package shipped": {
+			Kind: schedule.KindTimer, Unit: "logrotate.timer",
+			Service: "logrotate.service",
+			File:    "/usr/lib/systemd/system/logrotate.timer",
+		},
+		"a timer that activates nothing": {
+			Kind: schedule.KindTimer, Unit: "orphan.timer",
+			File: UnitPathFor("orphan.timer"),
+		},
+		"a cron line": {Kind: schedule.KindCrontab, Name: "ana · check-queue"},
+	}
+	for name, job := range tests {
+		if ToolWrote(job) {
+			t.Errorf("%s was read as one this tool wrote", name)
+		}
+	}
+	// And the reason is a sentence a status line can show as it stands.
+	if reason := NotOursReason(systemTimer); !strings.Contains(reason, "backup.timer") {
+		t.Errorf("NotOursReason does not name the unit: %q", reason)
+	}
+}

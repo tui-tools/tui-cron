@@ -530,6 +530,16 @@ func CurrentUser() string {
 	return "root"
 }
 
+// Root reports that the tool is running as root, which is what decides whether
+// a new line may go anywhere other than the caller's own table.
+//
+// It is the effective uid rather than the name, and it is asked rather than
+// inferred from a sudo prefix: `crontab -u ana` and a write into /etc/cron.d
+// are refused by cron and by the filesystem for everybody else, so offering
+// either to a user who cannot do it would be offering a dialog that ends in a
+// permission error.
+func Root() bool { return os.Geteuid() == 0 }
+
 // fileExists reports whether a path is there at all.
 func fileExists(path string) bool {
 	_, err := os.Stat(path)

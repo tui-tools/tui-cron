@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,7 +20,23 @@ const (
 	fieldUser        = "user"
 	fieldPersistent  = "persistent"
 	fieldDescription = "description"
+	fieldTarget      = "target"
+	fieldFile        = "file"
 )
+
+// The three tables a new cron line can go into. They are offered only when the
+// tool runs as root, because the other two are writes cron and the filesystem
+// refuse to anybody else.
+const (
+	targetOwnTable  = "your own crontab"
+	targetUserTable = "another account's crontab"
+	targetCronD     = "/etc/cron.d"
+)
+
+// addTargets is the order the target field cycles through. The caller's own
+// table is first because it is the one that needs no privilege and the one
+// almost every line belongs in.
+var addTargets = []string{targetOwnTable, targetUserTable, targetCronD}
 
 // formKind is which of the four things a form is for. They share one struct
 // because they share one shape — a list of fields with a live reading of the
@@ -74,6 +91,12 @@ type jobForm struct {
 	active int
 	// job is the row the form is about, empty for a create.
 	job schedule.Job
+	// caps is what the backend supports, which is what decides whether the add
+	// form offers a target at all and how it names the file it would write.
+	caps schedule.Capabilities
+	// me is the account the tool is running as, which is whose crontab the
+	// default target is.
+	me string
 	// reading is the English for the schedule field as it stands, and
 	// readingErr the reason there is none.
 	reading    string
@@ -106,7 +129,7 @@ func newChoiceField(key, label, help string, options []string, value string) for
 
 // newEditForm builds the editor for an existing job's schedule.
 func newEditForm(job schedule.Job, caps schedule.Capabilities) jobForm {
-	f := jobForm{job: job, title: "Change when " + job.Name + " runs"}
+	f := jobForm{job: job, caps: caps, title: "Change when " + job.Name + " runs"}
 	if job.Kind.Systemd() {
 		f.kind = formEditSchedule
 		f.destination = caps.DropInFor(job.Unit)
@@ -114,6 +137,20 @@ func newEditForm(job schedule.Job, caps schedule.Capabilities) jobForm {
 			"systemd's calendar syntax: daily, weekly, Mon..Fri 09:00, "+
 				"*-*-01 04:30:00.",
 			job.Schedule, job.Schedule)}
+		// What a timer runs can be changed only for a timer this tool wrote.
+		// Re-pointing a unit a package installed is a change that package's
+		// next update would silently undo, so the field is not offered at all
+		// rather than offered and refused.
+		if job.ToolWritten {
+			f.title = "Change " + job.Name
+			f.destination = caps.DropInFor(job.Unit) + ", or " +
+				caps.DropInFor(job.Service) + " for the command"
+			f.fields = append(f.fields, newTextField(fieldCommand, "ExecStart",
+				"An absolute path. systemd runs it with no shell and no PATH of "+
+					"yours. Change this or the schedule, one at a time: they are "+
+					"two separate drop-ins.",
+				job.Command, job.Command))
+		}
 	} else {
 		f.kind = formEditCron
 		f.destination = job.Where()
@@ -133,35 +170,164 @@ func newEditForm(job schedule.Job, caps schedule.Capabilities) jobForm {
 	return f
 }
 
-// newAddForm builds the editor for a new line in this account's crontab.
-func newAddForm(user string) jobForm {
+// newAddForm builds the editor for a new cron line.
+//
+// Where that line goes is a field rather than an assumption, but only for root:
+// `crontab -u somebody` and a file in /etc/cron.d are writes cron and the
+// filesystem refuse to everybody else, so for everybody else the form is the
+// one it has always been and the target is this account's own table.
+func newAddForm(user string, caps schedule.Capabilities) jobForm {
 	f := jobForm{
-		kind:        formAddCron,
-		title:       "Add a line to " + user + "'s crontab",
-		destination: "your own crontab, replaced whole through `crontab <file>`",
-		// The line belongs to this account's table, which has no user field:
-		// the job carries the owner so the writer knows whose table to stage.
+		kind: formAddCron,
+		caps: caps,
+		me:   user,
+		// The line belongs to a table with no user field until the target says
+		// otherwise: the job carries the owner so the writer knows whose table
+		// to stage.
 		job: schedule.Job{Kind: schedule.KindCrontab, Owner: user},
-		fields: []formField{
-			newTextField(fieldSchedule, "Schedule",
-				"Five cron fields — minute hour day month weekday — or a macro "+
-					"like @daily or @reboot.",
-				"", "*/15 * * * *"),
-			newTextField(fieldCommand, "Command",
-				"cron runs this through /bin/sh, so a pipe or a redirection is "+
-					"allowed here.",
-				"", "/usr/local/bin/something"),
-		},
 	}
+	f.retarget()
 	f.focusActive()
 	f.reread()
 	return f
+}
+
+// retarget rebuilds the add form's fields for the target now chosen, keeping
+// whatever was typed into the fields the new target also has.
+//
+// The fields that do not apply are absent rather than ignored: a form showing
+// an Account box that the chosen target will not read is a form that invites
+// somebody to fill it in and wonder why nothing happened.
+func (f *jobForm) retarget() {
+	if f.kind != formAddCron {
+		return
+	}
+	kept := map[string]string{}
+	for _, field := range f.fields {
+		kept[field.key] = field.value()
+	}
+	or := func(value, fallback string) string {
+		if value == "" {
+			return fallback
+		}
+		return value
+	}
+
+	var fields []formField
+	target := targetOwnTable
+	if f.caps.SupportsAnyTable {
+		target = or(kept[fieldTarget], targetOwnTable)
+		fields = append(fields, newChoiceField(fieldTarget, "Where",
+			"Which table the line goes into. Your own is replaced through "+
+				"`crontab <file>`, another account's through `crontab -u`, and "+
+				"a file in /etc/cron.d is installed with its own user field.",
+			addTargets, target))
+	}
+	switch target {
+	case targetUserTable:
+		fields = append(fields, newTextField(fieldUser, "Account",
+			"Whose crontab the line is added to. The whole of that account's "+
+				"table is replaced, and the diff shows it.",
+			or(kept[fieldUser], f.me), f.me))
+	case targetCronD:
+		fields = append(fields,
+			newTextField(fieldFile, "File",
+				"The name in /etc/cron.d. No dot: cron ignores a file whose name "+
+					"has one, so a table saved as backup.cron never runs.",
+				or(kept[fieldFile], "tui-cron"), "tui-cron"),
+			newTextField(fieldUser, "Account",
+				"The user field /etc/cron.d lines carry: the account cron runs "+
+					"the command as.",
+				or(kept[fieldUser], "root"), "root"))
+	}
+	fields = append(fields,
+		newTextField(fieldSchedule, "Schedule",
+			"Five cron fields — minute hour day month weekday — or a macro "+
+				"like @daily or @reboot.",
+			kept[fieldSchedule], "*/15 * * * *"),
+		newTextField(fieldCommand, "Command",
+			"cron runs this through /bin/sh, so a pipe or a redirection is "+
+				"allowed here.",
+			kept[fieldCommand], "/usr/local/bin/something"))
+
+	f.fields = fields
+	f.active = min(f.active, len(f.fields)-1)
+	f.retitle()
+	f.focusActive()
+}
+
+// retitle names the table the add form is about to write, which is the one
+// thing a reader has to be sure of before typing a command into it.
+func (f *jobForm) retitle() {
+	if f.kind != formAddCron {
+		return
+	}
+	switch f.value(fieldTarget) {
+	case targetUserTable:
+		who := f.value(fieldUser)
+		f.title = "Add a line to " + who + "'s crontab"
+		f.destination = who + "'s crontab, replaced whole through " +
+			"`crontab -u " + who + " <file>`"
+	case targetCronD:
+		name := f.value(fieldFile)
+		path := ""
+		if f.caps.CronDPathFor != nil {
+			path = f.caps.CronDPathFor(name)
+		}
+		if path == "" {
+			path = "/etc/cron.d/" + name + " — which is not a name cron reads"
+		}
+		f.title = "Add a line to " + path
+		f.destination = path + ", installed with install -m 644"
+	default:
+		f.title = "Add a line to " + f.me + "'s crontab"
+		f.destination = "your own crontab, replaced whole through `crontab <file>`"
+	}
+}
+
+// target is the table the add form writes into: the job that names it, with the
+// line number 0 that means "append".
+func (f jobForm) target() (schedule.Job, error) {
+	job := f.job
+	job.Line = 0
+	job.Command = f.value(fieldCommand)
+	switch f.value(fieldTarget) {
+	case targetUserTable:
+		job.Owner = f.value(fieldUser)
+	case targetCronD:
+		name := f.value(fieldFile)
+		path := ""
+		if f.caps.CronDPathFor != nil {
+			path = f.caps.CronDPathFor(name)
+		}
+		if path == "" {
+			return schedule.Job{}, fmt.Errorf(
+				"%q is not a name cron will read in /etc/cron.d — use letters, "+
+					"digits, - and _, and no dot: cron ignores a file whose name "+
+					"has one, so the table would silently never run", name)
+		}
+		job.Kind, job.File, job.Owner = schedule.KindCronD, path,
+			f.value(fieldUser)
+	}
+	return job, nil
+}
+
+// has reports whether the form carries a field at all, which is how the caller
+// tells a timer this tool wrote from one it did not.
+func (f jobForm) has(key string) bool {
+	for _, field := range f.fields {
+		if field.key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // newCreateForm builds the editor for a new systemd timer.
 func newCreateForm(caps schedule.Capabilities) jobForm {
 	f := jobForm{
 		kind:        formCreate,
+		caps:        caps,
 		title:       "Create a systemd timer",
 		destination: caps.UnitDir + "/<name>.timer and .service",
 		fields: []formField{

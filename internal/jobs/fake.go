@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,11 @@ var demoNow = time.Date(2026, 8, 30, 9, 41, 0, 0, time.UTC)
 
 // demoUser is the account the sample machine's crontab belongs to.
 const demoUser = "ana"
+
+// spoolPrefix is where cron keeps the per-account tables. It is taken from the
+// cron half rather than written down again, so a path this file recognises as a
+// crontab is one that half would have built.
+var spoolPrefix = crontab.TablePathFor("")
 
 // Fake is an in-memory machine carrying both schedulers. It backs --demo and
 // the tests: every key works, every command is built and previewed exactly as
@@ -35,6 +41,14 @@ type Fake struct {
 	staged map[string]string
 	// tables is the sample machine's cron tables, keyed by path.
 	tables map[string]string
+	// removed are the unit files taken off the sample machine, keyed by path.
+	// The timer list is rebuilt from the sample data on every change, so a
+	// deletion has to be remembered or the deleted timer would come back on the
+	// next reload.
+	removed map[string]bool
+	// commands are the ExecStart values a drop-in re-pointed a sample service
+	// at, keyed by the service unit.
+	commands map[string]string
 }
 
 // NewFake builds the sample machine: six timers, one of which failed last
@@ -51,6 +65,8 @@ func NewFake() *Fake {
 // reset builds the sample state. It is a function rather than a literal so
 // --demo starts from the same machine every time, however it was left.
 func (f *Fake) reset() {
+	f.removed = map[string]bool{}
+	f.commands = map[string]string{}
 	f.tables = map[string]string{
 		crontab.TablePathFor(demoUser): demoUserTable,
 		crontab.SystemCrontab:          demoSystemCrontab,
@@ -73,17 +89,32 @@ func (f *Fake) reset() {
 // rebuild recomputes the job list from the sample timers and the sample cron
 // tables, which is what a reload does after a change.
 func (f *Fake) rebuild() {
-	list := append([]schedule.Job(nil), demoTimers()...)
-	for _, path := range []string{
-		crontab.TablePathFor(demoUser), crontab.SystemCrontab,
-		crontab.CronDDir + "/0hourly",
-	} {
+	var list []schedule.Job
+	for _, job := range demoTimers() {
+		if f.removed[timers.UnitPathFor(job.Unit)] {
+			continue
+		}
+		if command, ok := f.commands[job.Service]; ok {
+			job.Command = command
+		}
+		list = append(list, job)
+	}
+	// Every table the sample machine has, not only the three it started with:
+	// a line added to another account's crontab or to a new file in
+	// /etc/cron.d has to appear on the next reload the way it would on a real
+	// machine. The paths are sorted so the demo reads the same every run.
+	paths := make([]string, 0, len(f.tables))
+	for path := range f.tables {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
 		text := f.tables[path]
 		if text == "" {
 			continue
 		}
-		if path == crontab.TablePathFor(demoUser) {
-			list = append(list, crontab.ParseUserTable(text, demoUser, path)...)
+		if owner, found := strings.CutPrefix(path, spoolPrefix); found {
+			list = append(list, crontab.ParseUserTable(text, owner, path)...)
 			continue
 		}
 		list = append(list, crontab.ParseSystemTable(text, path)...)
@@ -147,19 +178,25 @@ func demoTimers() []schedule.Job {
 		service    string
 		kind       schedule.Kind
 		owner      string
+		// ours marks the one sample timer this tool wrote, which is the only
+		// one d will remove and the only one whose command e will change. On a
+		// real machine the answer is read from the two files' headers; the
+		// sample machine has no files, so it is written down here.
+		ours bool
 	}{
-		{demoLogrotate, demoLogrotateService, schedule.KindTimer, "root"},
-		{demoFstrim, demoFstrimService, schedule.KindTimer, "root"},
-		{demoBackup, demoBackupService, schedule.KindTimer, "root"},
-		{demoMirror, demoMirrorService, schedule.KindTimer, "root"},
-		{demoPlocate, demoPlocateService, schedule.KindTimer, "root"},
-		{demoSyncNotes, demoSyncNotesService, schedule.KindUserTimer, demoUser},
+		{demoLogrotate, demoLogrotateService, schedule.KindTimer, "root", false},
+		{demoFstrim, demoFstrimService, schedule.KindTimer, "root", false},
+		{demoBackup, demoBackupService, schedule.KindTimer, "root", false},
+		{demoMirror, demoMirrorService, schedule.KindTimer, "root", true},
+		{demoPlocate, demoPlocateService, schedule.KindTimer, "root", false},
+		{demoSyncNotes, demoSyncNotesService, schedule.KindUserTimer, demoUser, false},
 	}
 	out := make([]schedule.Job, 0, len(specs))
 	for _, spec := range specs {
 		job := timers.JobFromTimer(timers.ParseProperties(spec.properties),
 			spec.kind, spec.owner)
 		timers.ApplyService(&job, timers.ParseProperties(spec.service))
+		job.ToolWritten = spec.ours
 		out = append(out, job)
 	}
 	return out
@@ -354,8 +391,14 @@ func (f *Fake) Capabilities() schedule.Capabilities {
 		SupportsTimerCreate:  true,
 		SupportsCronEdit:     true,
 		SupportsConvert:      true,
-		DropInFor:            timers.DropInPathFor,
-		UnitDir:              timers.UnitDir,
+		// The sample machine is one the tool is root on, so --demo offers the
+		// target picker a real root session offers. Nothing is written either
+		// way, and a demo that hid the picker would hide a whole dialog.
+		SupportsAnyTable: true,
+		DropInFor:        timers.DropInPathFor,
+		UnitDir:          timers.UnitDir,
+		CronDPathFor:     crontab.CronDPathFor,
+		ValidCronDName:   crontab.ValidCronDName,
 	}
 }
 
@@ -388,15 +431,36 @@ func (f *Fake) apply(cmd schedule.Command) (string, error) {
 		f.applyCrontab(argv)
 	case "install":
 		f.applyInstall(argv)
+	case "rm":
+		f.applyRemove(argv)
 	}
 	return "", nil
 }
 
+// applyRemove takes a unit file off the sample machine, the way rm takes one
+// off a real one. A drop-in path is only unstaged: the unit it belonged to is
+// removed by the command that names the unit itself.
+func (f *Fake) applyRemove(argv []string) {
+	path := argv[len(argv)-1]
+	delete(f.staged, path)
+	if !strings.HasPrefix(path, timers.UnitDir+"/") ||
+		strings.Contains(path, ".d/") {
+		return
+	}
+	f.removed[path] = true
+	f.rebuild()
+}
+
 // applySystemctl mirrors a control verb onto the sample machine.
 func (f *Fake) applySystemctl(argv []string) {
-	rest := argv[1:]
-	if len(rest) > 0 && rest[0] == "--user" {
-		rest = rest[1:]
+	var rest []string
+	for _, arg := range argv[1:] {
+		// --user picks the manager and --now folds a stop into a disable;
+		// neither changes what the sample machine has to record.
+		if strings.HasPrefix(arg, "--") {
+			continue
+		}
+		rest = append(rest, arg)
 	}
 	if len(rest) < 2 {
 		return
@@ -463,30 +527,61 @@ func (f *Fake) applyInstall(argv []string) {
 		f.rebuild()
 		return
 	}
-	// A drop-in: the sample timer picks up the new schedule the way a real one
-	// does after the daemon-reload and the restart that follow.
+	// A drop-in: the sample timer picks up the new schedule, or the sample
+	// service the new command, the way a real one does after the daemon-reload
+	// and the restart that follow.
 	for i := range f.model.Jobs {
 		job := &f.model.Jobs[i]
-		if job.Unit == "" || destination != timers.DropInPathFor(job.Unit) {
-			continue
-		}
 		for _, line := range strings.Split(content, "\n") {
-			if expression, found := strings.CutPrefix(line, "OnCalendar="); found &&
-				strings.TrimSpace(expression) != "" {
-				job.Schedule = strings.TrimSpace(expression)
-				job.Explain = schedule.DescribeCalendar(job.Schedule)
+			if job.Unit != "" && destination == timers.DropInPathFor(job.Unit) {
+				if expression, found := strings.CutPrefix(line,
+					"OnCalendar="); found && strings.TrimSpace(expression) != "" {
+					job.Schedule = strings.TrimSpace(expression)
+					job.Explain = schedule.DescribeCalendar(job.Schedule)
+				}
+			}
+			if job.Service != "" && destination == timers.DropInPathFor(job.Service) {
+				if command, found := strings.CutPrefix(line,
+					"ExecStart="); found && strings.TrimSpace(command) != "" {
+					job.Command = strings.TrimSpace(command)
+					// Remembered too, so a reload of the sample machine keeps
+					// the new command rather than rebuilding the old one.
+					f.commands[job.Service] = job.Command
+				}
 			}
 		}
 	}
 }
 
+// demoTimerText is the sample timer's unit file, as the demo would have written
+// it. A timer this tool wrote carries the header that says so, because that
+// header is what d and e read on a real machine.
+func demoTimerText(job schedule.Job) string {
+	text := ""
+	if job.ToolWritten {
+		text = "# " + timers.Marker + " on " + timers.Stamp(demoNow) + ".\n\n"
+	}
+	return text + "[Unit]\nDescription=" + job.Description +
+		"\n\n[Timer]\nOnCalendar=" + job.Schedule + "\n" +
+		persistentLine(job) + "Unit=" + job.Service +
+		"\n\n[Install]\nWantedBy=timers.target\n"
+}
+
+// demoServiceText is the sample service's unit file, the other half of the pair
+// a deletion removes.
+func demoServiceText(job schedule.Job) string {
+	text := ""
+	if job.ToolWritten {
+		text = "# " + timers.Marker + " on " + timers.Stamp(demoNow) + ".\n\n"
+	}
+	return text + "[Unit]\nDescription=" + job.Description +
+		"\n\n[Service]\nType=oneshot\nExecStart=" + job.Command + "\n"
+}
+
 // Definition returns the sample job's own text.
 func (f *Fake) Definition(_ context.Context, job schedule.Job) (string, error) {
 	if job.Kind.Systemd() {
-		return "# " + job.File + "\n[Unit]\nDescription=" + job.Description +
-			"\n\n[Timer]\nOnCalendar=" + job.Schedule + "\n" +
-			persistentLine(job) + "Unit=" + job.Service +
-			"\n\n[Install]\nWantedBy=timers.target\n", nil
+		return "# " + job.File + "\n" + demoTimerText(job), nil
 	}
 	if text, ok := f.tables[job.File]; ok {
 		return "# " + job.File + "\n" + text, nil
@@ -710,13 +805,41 @@ func (f *Fake) writeCronTable(model schedule.Model, job schedule.Job,
 	}, nil
 }
 
-// BuildDelete removes a cron line from the sample machine.
+// BuildSetTimerCommand re-points a sample timer at another command, through
+// the same drop-in the real backend writes.
+func (f *Fake) BuildSetTimerCommand(_ context.Context, job schedule.Job,
+	command string) (schedule.WritePlan, error) {
+	if err := checkOurs(job); err != nil {
+		return schedule.WritePlan{}, err
+	}
+	path := timers.DropInPathFor(job.Service)
+	plan, err := execDropInPlan(job, command, f.staged[path])
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	temp := "/tmp/tui-cron/" + timers.DropInName
+	plan.TempPath = temp
+	f.staged[path] = plan.Content
+	plan.Commands, err = execDropInCommands(job, temp)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	return plan, nil
+}
+
+// BuildDelete removes a cron line from the sample machine, or the two unit
+// files of the one sample timer this tool wrote.
 func (f *Fake) BuildDelete(_ context.Context, model schedule.Model,
 	job schedule.Job) (schedule.WritePlan, error) {
 	if job.Kind.Systemd() {
-		return schedule.WritePlan{}, fmt.Errorf(
-			"%s is a systemd timer: disabling it stops it, and removing its "+
-				"unit file is a job for the package that installed it", job.Unit)
+		var dropIns []string
+		for _, unit := range []string{job.Unit, job.Service} {
+			if f.staged[timers.DropInPathFor(unit)] != "" {
+				dropIns = append(dropIns, unit)
+			}
+		}
+		return deleteTimerPlan(job, demoTimerText(job), demoServiceText(job),
+			dropIns)
 	}
 	if job.Kind == schedule.KindAnacronDir {
 		return schedule.WritePlan{}, fmt.Errorf(

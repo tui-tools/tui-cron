@@ -52,9 +52,77 @@ const (
 	DropInName = "90-tui-cron.conf"
 )
 
+// Marker is the phrase every file this tool writes carries in its header, and
+// the only thing that makes a unit one this tool will delete or re-point.
+//
+// It is a marker rather than a registry on purpose. A list of "units tui-cron
+// created" kept in a state file would be wrong the moment somebody moved a
+// machine, restored a backup or edited a unit by hand; the file itself saying
+// who wrote it survives all three, and it is visible to anyone reading /etc
+// with no tool at all.
+const Marker = "Written by tui-cron"
+
+// marker is Marker folded once, for a case-insensitive search.
+var marker = strings.ToLower(Marker)
+
 // DropInPathFor is the drop-in that overrides one timer's OnCalendar.
 func DropInPathFor(unit string) string {
 	return UnitDir + "/" + unit + ".d/" + DropInName
+}
+
+// UnitPathFor is where a unit this tool wrote lives.
+func UnitPathFor(unit string) string { return UnitDir + "/" + unit }
+
+// MarkedByTool reports whether a file's text carries the marker.
+func MarkedByTool(text string) bool {
+	return strings.Contains(strings.ToLower(text), marker)
+}
+
+// ToolWrote reports whether both files of a timer are ones this tool wrote,
+// which is the one thing that makes a timer this tool will delete or re-point.
+//
+// Three facts have to hold, and no two of them are enough. The timer has to be
+// in the system manager, because a user timer's files are in the account's own
+// directory and not where this tool writes. Both its unit files have to be
+// exactly the paths in UnitDir this tool would have written — a unit a
+// distribution shipped in /usr/lib is not ours whatever its text says. And both
+// have to carry the marker, so a unit somebody else wrote into the local
+// administrator's directory is left alone too.
+//
+// The answer is read from disk rather than remembered, and a file that cannot
+// be read is not ours: the refusal is the safe direction.
+func ToolWrote(job schedule.Job) bool {
+	if job.Kind != schedule.KindTimer || job.Unit == "" || job.Service == "" {
+		return false
+	}
+	if checkUnit(job.Unit) != nil || checkUnit(job.Service) != nil {
+		return false
+	}
+	if job.File != "" && job.File != UnitPathFor(job.Unit) {
+		return false
+	}
+	return markedFile(UnitPathFor(job.Unit)) && markedFile(UnitPathFor(job.Service))
+}
+
+// markedFile reports whether the file at a path exists and carries the marker.
+func markedFile(path string) bool {
+	raw, err := os.ReadFile(path) //nolint:gosec // the path is UnitDir plus a checked unit name
+	if err != nil {
+		return false
+	}
+	return MarkedByTool(string(raw))
+}
+
+// NotOursReason says why a timer is not one this tool will remove or re-point,
+// in the words the status line shows.
+func NotOursReason(job schedule.Job) string {
+	if job.Kind == schedule.KindUserTimer {
+		return job.Unit + " lives in your own systemd directory, not " + UnitDir +
+			", and this tool only removes what it wrote there"
+	}
+	return job.Unit + " was not written by this tool: its unit files carry no " +
+		"\"" + Marker + "\" header, so removing them belongs to whoever put " +
+		"them there — disabling it with D stops it"
 }
 
 // DropInDirFor is the directory that drop-in lives in.
@@ -257,6 +325,9 @@ func (b *Backend) loadManager(ctx context.Context, user bool) ([]schedule.Job, e
 				ApplyService(&job, ParseProperties(serviceOut))
 			}
 		}
+		// Whether this tool wrote the timer is read once, here, so the actions
+		// that depend on it do not each go back to the disk.
+		job.ToolWritten = ToolWrote(job)
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
@@ -444,6 +515,21 @@ func (b *Backend) CalendarCommand(expression string) string {
 // readable on every distribution this tool targets.
 func (b *Backend) DropInContent(unit string) string {
 	raw, err := os.ReadFile(DropInPathFor(unit)) //nolint:gosec // the path is built from a checked unit name
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// UnitContent returns what a unit file in UnitDir says today, empty when there
+// is none. Like DropInContent it is read unprivileged: /etc/systemd/system is
+// world readable on every distribution this tool targets, and the text is what
+// the confirm dialog diffs away when the file is about to be removed.
+func (b *Backend) UnitContent(unit string) string {
+	if checkUnit(unit) != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(UnitPathFor(unit)) //nolint:gosec // the path is UnitDir plus a checked unit name
 	if err != nil {
 		return ""
 	}
