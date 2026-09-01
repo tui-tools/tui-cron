@@ -251,6 +251,39 @@ tool says the user timers were not read rather than that there are none.
 and `n` runs the job now — which starts the *service*, not the timer, because
 arming a timer runs nothing.
 
+### The timers this tool wrote are the only ones it will remove
+
+A timer created with `c` or converted with `t` gets a header in both of its
+files:
+
+```ini
+# Written by tui-cron on 2026-09-01 02:30:00 UTC.
+```
+
+That line is the whole ownership rule. `d` removes a timer only when **both**
+its unit files are in `/etc/systemd/system` — the local administrator's
+directory, never `/usr/lib` — **and both carry that header**. Anything else is
+somebody's package, and it is refused with the reason: disabling it with `D` is
+what stopping it means, and removing the file belongs to whatever installed it.
+The answer is read off the files themselves rather than remembered in a state
+file, so it survives a restored backup, a moved machine and a unit edited by
+hand.
+
+A deletion runs `systemctl disable --now`, `rm` on **both** files and on any
+drop-in this tool left beside them, then `daemon-reload` — the unit unloaded
+before the files it is read from go, because a timer left armed with no file
+behind it is the one state nobody can explain afterwards. And because a removed
+unit file does not come back, `d` on a timer asks for the unit's **name to be
+typed** before it will even show the commands. A typo removes nothing.
+
+`e` on a timer this tool wrote also offers what it runs. The `ExecStart` change
+is a drop-in on the *service* — `/etc/systemd/system/<name>.service.d/90-tui-cron.conf`
+— with the same empty-assignment trick the schedule uses, because `ExecStart` is
+a list too and a drop-in that only names the new command would run both, one
+after the other. The schedule and the command are two files, so they are changed
+one at a time: the form says so rather than showing the diff of one and running
+the commands of both.
+
 ## The cron jobs
 
 ![The cron jobs](docs/screenshots/tui-cron-cron.png)
@@ -312,6 +345,27 @@ jobs alone would silently drop them.
 installed with `install -m 644` instead, and a name with a dot in it is refused
 outright — cron ignores such a file, so a table saved as `backup.cron` is a
 table that silently never runs.
+
+### Where a new line goes, when you are root
+
+Run as an ordinary user, `a` writes one place: your own crontab, through
+`crontab <file>`. Run as root, it asks which of the three tables first:
+
+| Target | What runs | What the line looks like |
+| --- | --- | --- |
+| your own crontab | `crontab <staged file>` | five fields and a command |
+| another account's crontab | `crontab -u <who> <staged file>` | five fields and a command |
+| `/etc/cron.d` | `install -m 644 <staged> /etc/cron.d/<name>` | five fields, **a user field**, and a command |
+
+The fields follow the target: pick another account and the form asks whose,
+pick `/etc/cron.d` and it asks for the file name and the user field that format
+carries. The fields that do not apply are absent rather than ignored, and the
+title names the table before you type a command into it.
+
+The three are offered to root only because the other two are writes cron and the
+filesystem refuse to everybody else — a picker that ended in a permission error
+would be worse than no picker. Replacing another account's table still replaces
+**the whole of it**, and the dialog says so above the diff.
 
 ### There is no portable way to have cron check a table
 
@@ -442,7 +496,9 @@ Every one of these is previewed and confirmed first.
 | Key | What runs |
 | --- | --- |
 | `e` on a timer | `systemd-analyze calendar <expr>` (a read, before the question), then `install -d -m 755 /etc/systemd/system/<t>.timer.d`, `install -m 644 <staged> …/90-tui-cron.conf`, `systemctl daemon-reload`, `systemctl restart <t>.timer` |
-| `e`/`a`/`d` on a cron line | `crontab <staged file>` for a user's table, or `install -m 644 <staged> /etc/cron.d/<name>` for a system one |
+| `e` on the command of a timer this tool wrote | `install -d -m 755 /etc/systemd/system/<n>.service.d`, `install -m 644 <staged> …/90-tui-cron.conf`, `systemctl daemon-reload` — the timer is not restarted, because the timer did not change |
+| `d` on a timer this tool wrote | `systemctl disable --now <t>.timer`, `rm -f -- /etc/systemd/system/<t>.timer`, the same for `<n>.service` and for any drop-in this tool left, then `systemctl daemon-reload` |
+| `e`/`a`/`d` on a cron line | `crontab <staged file>` for your own table, `crontab -u <who> <staged file>` for another account's, or `install -m 644 <staged> /etc/cron.d/<name>` for a system one |
 | `c` / `t` | `install -m 644 <staged> /etc/systemd/system/<name>.service`, the same for `.timer`, then `systemctl daemon-reload` — and nothing else: the timer is **not** enabled |
 | `E` / `D` | `systemctl enable` / `systemctl disable <t>.timer` |
 | `s` / `x` | `systemctl start` / `systemctl stop <t>.timer` |
@@ -452,7 +508,10 @@ Nothing else. A timer in your own manager gets `--user` in front of the verb,
 read from the job rather than assumed. There is no code path that writes to
 `/etc` other than those `install` commands, each with a destination this tool
 checks rather than a parameter it trusts, and none of them can name a unit file
-a distribution shipped.
+a distribution shipped. The `rm` commands are the same: the path is assembled
+from a checked unit name and can only ever be a file directly inside
+`/etc/systemd/system`, so there is no way to point one at `/usr/lib` or
+anywhere else at all.
 
 ## Keys
 
@@ -465,9 +524,9 @@ a distribution shipped.
 | `enter` | Open the selected job: its unit or table, the next runs, its log |
 | `esc` | Leave the detail screen |
 | `/` | Filter this screen — including on the English (`esc` clears) |
-| `e` | Change when the selected job runs, with a diff to confirm |
-| `a` | Add a line to your own crontab |
-| `d` | Remove the selected cron line |
+| `e` | Change when the selected job runs — and what it runs, for a timer this tool wrote |
+| `a` | Add a cron line: your own table, or as root another account's or `/etc/cron.d` |
+| `d` | Remove the selected cron line, or a timer this tool wrote — both its files, after typing its name |
 | `c` | Create a systemd timer and the service it runs |
 | `t` | Write a timer for the selected cron line, not enabled |
 | `E` / `D` | Enable / disable the selected timer at boot |
@@ -479,7 +538,8 @@ a distribution shipped.
 
 In a **form**: `tab` moves between fields, `←`/`→` cycles a value, `space` opens
 the list, `enter` builds the change and shows it, `esc` cancels. The reading
-under the schedule field is recomputed on every keystroke.
+under the schedule field is recomputed on every keystroke, and so is the name of
+the table an add form is about to write.
 
 ![Help](docs/screenshots/tui-cron-help.png)
 
@@ -501,12 +561,16 @@ under the schedule field is recomputed on every keystroke.
   calendar`, reviewed as a diff, applied with `daemon-reload` and a `restart`.
 - Add, change and remove a cron line, in your own table or another account's,
   through `crontab <file>` — with the whole table diffed and its environment
-  lines kept.
+  lines kept. As root, a new line can also go into `/etc/cron.d`, with the user
+  field that format carries.
 - Enable, disable, arm, disarm and trigger a timer, in either manager.
 - Create a timer and its `Type=oneshot` service from a form, checked by
   `systemd-analyze verify` before you are asked.
 - Convert a cron line to a timer, written but not enabled, refusing the two
   expressions and the one command shape that cannot convert exactly.
+- Change what a timer this tool wrote runs, through a drop-in on its service.
+- Delete a timer this tool wrote — both unit files, the drop-ins beside them and
+  a `daemon-reload` — after the unit's name has been typed out.
 - Follow the active Omarchy theme, and respect `NO_COLOR`.
 
 ## What v0.1 cannot do
@@ -514,8 +578,16 @@ under the schedule field is recomputed on every keystroke.
 - **No `OnBootSec` or `OnUnitActiveSec` editing.** A timer that fires relative
   to an event is listed and labelled, and the schedule editor refuses it: that
   is a change to the unit file, and this tool does not rewrite unit files.
-- **No removing a unit.** Disabling a timer stops it; deleting the unit file
-  belongs to the package that installed it.
+- **No removing a unit somebody else wrote.** `d` removes the two files of a
+  timer this tool wrote and nothing else. For anything a package installed,
+  disabling it is what stopping it means and deleting the unit file belongs to
+  whatever installed it.
+- **No re-pointing a unit somebody else wrote.** Changing a packaged service's
+  `ExecStart` is a change that package's next update would silently undo, so the
+  field is not offered at all.
+- **No editing a timer in your own manager beyond its schedule.** A user timer's
+  files are in your own directory, not where this tool writes, so it is neither
+  deleted nor re-pointed here.
 - **No moving a script between `cron.daily` and `cron.weekly`.** The directory
   is the schedule, so the change is a `mv` and not a confirm dialog.
 - **No anacron tuning.** `/etc/anacrontab`'s delays and `START_HOURS_RANGE` are
@@ -673,6 +745,10 @@ widgets, the config loader and the command runner shared by the whole family.
   that is a real thing to have started.
 - **A converted timer is not enabled**, and the cron line it came from is not
   removed. Enabling it before deleting the line means the job runs twice.
+- **Deleting a timer is final.** Both unit files go, and what they said is in
+  the diff on screen and nowhere else. That is why the unit's name has to be
+  typed before the dialog appears, and why it only ever applies to the two files
+  this tool wrote itself.
 - Reading needs no privileges at all: `systemctl show`, `crontab -l` for your
   own table and the journal all answer to any user. Only a change escalates,
   through `sudo -n`, which never prompts.

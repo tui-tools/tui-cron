@@ -204,6 +204,44 @@ func BuildRemoveDropIn(unit string) (schedule.Command, error) {
 	}, nil
 }
 
+// BuildDisableNow stops a unit and stops it starting at boot, in one call. It
+// is the first half of removing a timer: a unit file deleted while systemd
+// still has the unit loaded leaves a timer armed with no file behind it, which
+// is the one state nobody can explain afterwards.
+func BuildDisableNow(job schedule.Job) (schedule.Command, error) {
+	if !job.Kind.Systemd() {
+		return schedule.Command{}, fmt.Errorf(
+			"%s is a cron job, and systemctl disable does not apply to it", job.Name)
+	}
+	if err := checkUnit(job.Unit); err != nil {
+		return schedule.Command{}, err
+	}
+	return schedule.Command{
+		Argv: managerArgv(job, "disable", "--now", job.Unit),
+		Description: "Stop " + job.Unit + " now and stop it starting at boot" +
+			scope(job),
+		Destructive: true,
+	}, nil
+}
+
+// BuildRemoveUnit deletes a unit file this tool wrote.
+//
+// The path is assembled here from a checked unit name rather than taken from
+// the caller, and it can only ever be a file directly inside UnitDir — so this
+// builder cannot be pointed at a unit a distribution shipped in /usr/lib, and
+// cannot be pointed anywhere else at all.
+func BuildRemoveUnit(unit string) (schedule.Command, error) {
+	if err := checkUnit(unit); err != nil {
+		return schedule.Command{}, err
+	}
+	path := UnitPathFor(unit)
+	return schedule.Command{
+		Argv:        []string{"rm", "-f", "--", path},
+		Description: "Remove " + path,
+		Destructive: true,
+	}, nil
+}
+
 // expressionRe bounds what may be passed to systemd as a calendar expression.
 // The value goes into an argv and then into a file in /etc, so the characters
 // that would smuggle a second directive into that file — a newline, a `#`, a
@@ -228,9 +266,11 @@ func CheckExpression(expression string) error {
 
 // dropInHeader is the banner every generated drop-in carries. It names the
 // tool, and it states the one rule a reader of this file has to know.
-const dropInHeader = "# Written by tui-cron, and rewritten whole on every change.\n" +
-	"# The empty OnCalendar= below clears the schedules the unit file set, so\n" +
-	"# what follows replaces them rather than being added to them.\n"
+func dropInHeader(setting string) string {
+	return "# " + Marker + ", and rewritten whole on every change.\n" +
+		"# The empty " + setting + "= below clears what the unit file set, so\n" +
+		"# what follows replaces it rather than being added to it.\n"
+}
 
 // RenderDropIn produces the drop-in that replaces a timer's schedule.
 //
@@ -243,8 +283,22 @@ func RenderDropIn(expression string) (string, error) {
 	if err := CheckExpression(expression); err != nil {
 		return "", err
 	}
-	return dropInHeader + "\n[Timer]\nOnCalendar=\nOnCalendar=" +
+	return dropInHeader("OnCalendar") + "\n[Timer]\nOnCalendar=\nOnCalendar=" +
 		strings.TrimSpace(expression) + "\n", nil
+}
+
+// RenderExecDropIn produces the drop-in that replaces a service's ExecStart.
+//
+// The empty `ExecStart=` is the same trick and the same reason: ExecStart is a
+// list too, and a drop-in that only names the new command would leave the
+// service running both, one after the other. Assigning the empty value first
+// resets the list.
+func RenderExecDropIn(command string) (string, error) {
+	if err := CheckExec(command); err != nil {
+		return "", err
+	}
+	return dropInHeader("ExecStart") + "\n[Service]\nExecStart=\nExecStart=" +
+		strings.TrimSpace(command) + "\n", nil
 }
 
 // UnitPathsFor is where a created or converted timer's two files go.
@@ -336,7 +390,10 @@ func RenderUnits(spec schedule.NewTimer, stamp string) (service, timer string, e
 	if description == "" {
 		description = name
 	}
-	header := "# Written by tui-cron on " + stamp + ".\n"
+	// The header is the ownership marker. It is what later tells the tool that
+	// this pair of files is one it may remove or re-point, and it is what tells
+	// a person reading /etc the same thing.
+	header := "# " + Marker + " on " + stamp + ".\n"
 
 	var serviceBody strings.Builder
 	serviceBody.WriteString(header)

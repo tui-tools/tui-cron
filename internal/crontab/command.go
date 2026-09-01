@@ -58,6 +58,16 @@ func UnderCronD(path string) bool {
 // thing that reads or writes it.
 func TablePathFor(owner string) string { return "/var/spool/cron/" + owner }
 
+// CronDPathFor is where a named table in /etc/cron.d lives. A name cron would
+// not read is returned as the empty string rather than as a path, so a caller
+// cannot build a destination out of one.
+func CronDPathFor(name string) string {
+	if !ValidCronDName(name) {
+		return ""
+	}
+	return CronDDir + "/" + name
+}
+
 // BuildListArgv is the read that returns one account's crontab. Reading your
 // own needs no privileges; reading somebody else's needs root, and `crontab -u`
 // is how cron itself spells that.

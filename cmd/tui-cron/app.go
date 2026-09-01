@@ -58,6 +58,9 @@ const (
 	modePicker
 	modeForm
 	modeHelp
+	// modeTyped is the prompt in front of the one action that removes files:
+	// the name has to be typed out before the commands are even shown.
+	modeTyped
 )
 
 // app is the tui-cron Bubble Tea model.
@@ -93,6 +96,8 @@ type app struct {
 	form    jobForm
 	// pickerFor names the form field an open picker is filling.
 	pickerFor string
+	// typed is the destructive action waiting for its name to be typed.
+	typed typedConfirm
 
 	status     string
 	statusKind ui.StatusKind
@@ -143,6 +148,24 @@ type ranMsg struct {
 	title  string
 	output string
 	err    error
+}
+
+// typedConfirm is a confirm dialog held back until the user has typed the name
+// of the thing the action removes.
+//
+// It exists for exactly one action: deleting a timer's two unit files. Every
+// other change this tool makes can be read back off the machine and put back —
+// a drop-in is a file to delete, a crontab is a file to edit again — and a
+// removed unit file is gone. y on a dialog is the right question for a change
+// that can be undone; it is not the right question for one that cannot.
+type typedConfirm struct {
+	// phrase is what has to be typed, which is the unit's own name.
+	phrase string
+	// title, body and command are the confirm dialog held behind it.
+	title   string
+	body    string
+	command string
+	pending plan
 }
 
 // plan is what a confirm dialog is holding: one or more commands, run in
@@ -300,7 +323,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Anything else (cursor blink, …) only concerns an open text input.
-	if a.mode == modeFilter {
+	if a.mode == modeFilter || a.mode == modeTyped {
 		cmd, _ := a.input.Update(msg)
 		return a, cmd
 	}
@@ -324,6 +347,8 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch a.mode {
 	case modeConfirm:
 		return a.handleConfirm(msg)
+	case modeTyped:
+		return a.handleTyped(msg)
 	case modeFilter:
 		return a.handleFilter(msg)
 	case modePicker:
@@ -359,6 +384,37 @@ func (a *app) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, a.run(pending)
 }
 
+// handleTyped resolves the typed prompt in front of a deletion. Only the exact
+// name opens the dialog behind it; anything else, including an empty line, is a
+// cancellation that says what was expected.
+func (a *app) handleTyped(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	cmd, _ := a.input.Update(msg)
+	if !a.input.Done {
+		return a, cmd
+	}
+	typed, accepted := strings.TrimSpace(a.input.Value()), a.input.Accepted
+	pending := a.typed
+	a.typed = typedConfirm{}
+	a.mode = modeBrowse
+	switch {
+	case !accepted:
+		a.setStatus(ui.StatusInfo, "cancelled")
+	case typed != pending.phrase:
+		a.setStatusf(ui.StatusWarn,
+			"nothing was removed: that is not %q", pending.phrase)
+	default:
+		a.mode = modeConfirm
+		a.confirm = ui.Confirm{
+			Title:   pending.title,
+			Body:    pending.body,
+			Command: pending.command,
+			Danger:  true,
+			Payload: pending.pending,
+		}
+	}
+	return a, nil
+}
+
 // handleFilter resolves the filter prompt.
 func (a *app) handleFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	cmd, _ := a.input.Update(msg)
@@ -389,6 +445,8 @@ func (a *app) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	a.picker, a.pickerFor = ui.Picker{}, ""
 	if accepted {
 		a.form.set(field, choice)
+		// A new target is a different set of fields.
+		a.form.retarget()
 	}
 	a.mode = modeForm
 	return a, nil
@@ -410,11 +468,13 @@ func (a *app) handleForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "left":
 		if a.form.activeIsChoice() {
 			a.form.cycle(-1)
+			a.form.retarget()
 			return a, nil
 		}
 	case "right":
 		if a.form.activeIsChoice() {
 			a.form.cycle(1)
+			a.form.retarget()
 			return a, nil
 		}
 	case " ":
@@ -434,8 +494,10 @@ func (a *app) handleForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	cmd := a.form.updateActive(msg)
 	// The reading under the schedule field is recomputed on every keystroke,
 	// because watching the English change as you type is the whole point of
-	// having it there.
+	// having it there. The title follows the same rule: an add form names the
+	// table it is about to write as the account or the file name is typed.
 	a.form.reread()
+	a.form.retitle()
 	return a, cmd
 }
 
@@ -466,8 +528,7 @@ func (a *app) buildForm() (schedule.WritePlan, error) {
 
 	switch a.form.kind {
 	case formEditSchedule:
-		return a.backend.BuildSetSchedule(ctx, a.model, a.form.job,
-			a.form.value(fieldSchedule))
+		return a.buildTimerEdit(ctx)
 	case formEditCron:
 		job := a.form.job
 		job.Command = a.form.value(fieldCommand)
@@ -476,14 +537,40 @@ func (a *app) buildForm() (schedule.WritePlan, error) {
 	case formAddCron:
 		// A new line is an edit of line 0, which is how the table writer spells
 		// "append": the same code path, so an addition and a change produce the
-		// same diff and the same command.
-		job := a.form.job
-		job.Line = 0
-		job.Command = a.form.value(fieldCommand)
+		// same diff and the same command. Which table that is comes from the
+		// target field, and is this account's own when there is none.
+		job, err := a.form.target()
+		if err != nil {
+			return schedule.WritePlan{}, err
+		}
 		return a.backend.BuildSetSchedule(ctx, a.model, job,
 			a.form.value(fieldSchedule))
 	default:
 		return a.backend.BuildCreate(ctx, a.model, a.form.spec())
+	}
+}
+
+// buildTimerEdit decides which of the timer edit form's two changes is being
+// made.
+//
+// They are two files — one drop-in on the timer, one on the service — and the
+// dialog reviews one file. Doing both at once would show the diff of one and
+// run the commands of both, so the form refuses and says why rather than
+// picking for the user.
+func (a *app) buildTimerEdit(ctx context.Context) (schedule.WritePlan, error) {
+	job := a.form.job
+	expression, command := a.form.value(fieldSchedule), a.form.value(fieldCommand)
+	changedCommand := a.form.has(fieldCommand) && command != job.Command
+	changedSchedule := expression != job.Schedule
+	switch {
+	case changedCommand && changedSchedule:
+		return schedule.WritePlan{}, fmt.Errorf(
+			"change the schedule and the command one at a time: they are two " +
+				"separate drop-ins, and this dialog reviews one file")
+	case changedCommand:
+		return a.backend.BuildSetTimerCommand(ctx, job, command)
+	default:
+		return a.backend.BuildSetSchedule(ctx, a.model, job, expression)
 	}
 }
 
@@ -669,7 +756,12 @@ func (a *app) confirmRunNow() tea.Cmd {
 	return nil
 }
 
-// confirmDelete asks before removing a cron line.
+// confirmDelete asks before removing a cron line, or the two unit files of a
+// timer this tool wrote.
+//
+// The two are not the same question. A cron line comes back by typing it again,
+// and the dialog shows it going. A unit file does not come back at all, so the
+// unit's name has to be typed before the dialog is even shown.
 func (a *app) confirmDelete() tea.Cmd {
 	job, ok := a.selected()
 	if !ok {
@@ -683,6 +775,23 @@ func (a *app) confirmDelete() tea.Cmd {
 		a.setStatus(ui.StatusWarn, err.Error())
 		return nil
 	}
+
+	if job.Kind.Systemd() {
+		a.typed = typedConfirm{
+			phrase:  job.Unit,
+			title:   "Remove " + job.Unit + " and " + job.Service,
+			body:    a.writeBody(write),
+			command: a.previewAll(write.Commands),
+			pending: plan{title: "Remove " + job.Unit, commands: write.Commands},
+		}
+		a.input = ui.NewInput("Delete "+job.Unit,
+			"type "+job.Unit+" to go on", "")
+		a.input.Help = "Both unit files are removed and there is nothing to " +
+			"undo it with. Type the name exactly; anything else cancels."
+		a.mode = modeTyped
+		return nil
+	}
+
 	title := "Remove the cron line at " + job.Where()
 	a.mode = modeConfirm
 	a.confirm = ui.Confirm{
@@ -761,7 +870,7 @@ func (a *app) openAddForm() tea.Cmd {
 		a.setStatus(ui.StatusWarn, "cron is not installed on this machine")
 		return nil
 	}
-	a.form = newAddForm(a.model.User)
+	a.form = newAddForm(a.model.User, a.caps)
 	a.mode = modeForm
 	return nil
 }

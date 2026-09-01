@@ -93,8 +93,11 @@ func (r *Real) Capabilities() schedule.Capabilities {
 		SupportsTimerCreate:  r.timers != nil,
 		SupportsCronEdit:     r.cron != nil,
 		SupportsConvert:      r.timers != nil,
+		SupportsAnyTable:     r.cron != nil && crontab.Root(),
 		DropInFor:            timers.DropInPathFor,
 		UnitDir:              timers.UnitDir,
+		CronDPathFor:         crontab.CronDPathFor,
+		ValidCronDName:       crontab.ValidCronDName,
 	}
 }
 
@@ -478,13 +481,164 @@ func cronWarning(model schedule.Model, job schedule.Job) string {
 	return strings.Join(warnings, "\n\n")
 }
 
-// BuildDelete removes a cron line.
+// BuildSetTimerCommand re-points a timer this tool wrote at another command.
+//
+// The change is a drop-in on the *service*, not on the timer: ExecStart is the
+// service's setting, and the timer only names the unit to activate. The unit
+// file is left alone the same way a schedule change leaves it alone, so the
+// change is a file that can be deleted to undo it.
+func (r *Real) BuildSetTimerCommand(ctx context.Context, job schedule.Job,
+	command string) (schedule.WritePlan, error) {
+	if _, err := r.half(job); err != nil {
+		return schedule.WritePlan{}, err
+	}
+	if err := checkOurs(job); err != nil {
+		return schedule.WritePlan{}, err
+	}
+	before := r.timers.DropInContent(job.Service)
+	plan, err := execDropInPlan(job, command, before)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	temp, err := schedule.Stage(timers.DropInName, plan.Content)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	plan.TempPath = temp
+	plan.Commands, err = execDropInCommands(job, temp)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	_ = ctx
+	return plan, nil
+}
+
+// checkOurs is the one gate on the two actions that change a unit file rather
+// than add a file beside it.
+func checkOurs(job schedule.Job) error {
+	if !job.Kind.Systemd() {
+		return fmt.Errorf("%s is a cron job, not a timer", job.Name)
+	}
+	if !job.ToolWritten {
+		return fmt.Errorf("%s", timers.NotOursReason(job))
+	}
+	return nil
+}
+
+// execDropInPlan is the half of an ExecStart change that both backends share:
+// the content, the diff and what the dialog says about the check.
+func execDropInPlan(job schedule.Job, command,
+	before string) (schedule.WritePlan, error) {
+	content, err := timers.RenderExecDropIn(command)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	path := timers.DropInPathFor(job.Service)
+	if before == content {
+		return schedule.WritePlan{}, fmt.Errorf("%s already says exactly this", path)
+	}
+	return schedule.WritePlan{
+		Path:    path,
+		Content: content,
+		Diff:    schedule.Diff(path, before, content),
+		// `systemd-analyze verify` refuses a drop-in fragment outright, so
+		// there is no systemd check to run here and the dialog says so rather
+		// than claiming one passed. What is checked is what this tool can
+		// check: an absolute path, and nothing that would open a second section
+		// in the file.
+		Validation: "is this tool's own: systemd verifies whole units and " +
+			"refuses a drop-in fragment, so what was checked is that the " +
+			"command is an absolute path and carries no newline or [ ]",
+		Warning: execWarning(job),
+	}, nil
+}
+
+// execWarning is what the confirm dialog must say about re-pointing a service.
+func execWarning(job schedule.Job) string {
+	return job.Service + " keeps everything else the unit file says — its User, " +
+		"its environment and its Type. Only the command changes, and the old " +
+		"one is cleared rather than kept alongside the new one.\n\n" +
+		"A run already in progress is not stopped: the next run is the first " +
+		"one that uses the new command."
+}
+
+// execDropInCommands are the three commands an ExecStart change applies with.
+// The timer is not restarted: it is the service that changed, and a timer
+// re-arms on a schedule this change did not touch.
+func execDropInCommands(job schedule.Job,
+	tempPath string) ([]schedule.Command, error) {
+	makeDir, err := timers.BuildMakeDropInDir(job.Service)
+	if err != nil {
+		return nil, err
+	}
+	installCmd, err := timers.BuildInstall(tempPath,
+		timers.DropInPathFor(job.Service))
+	if err != nil {
+		return nil, err
+	}
+	return []schedule.Command{
+		makeDir, installCmd, timers.BuildDaemonReload(job),
+	}, nil
+}
+
+// deleteTimerPlan is the plan that removes a timer this tool wrote: both of its
+// files, the drop-ins beside them, and the unit unloaded first.
+//
+// It takes the two files' text rather than reading them, so the demo builds the
+// same plan from its in-memory machine that the real backend builds from disk.
+func deleteTimerPlan(job schedule.Job, timerText, serviceText string,
+	dropIns []string) (schedule.WritePlan, error) {
+	if err := checkOurs(job); err != nil {
+		return schedule.WritePlan{}, err
+	}
+	timerPath, servicePath := timers.UnitPathFor(job.Unit),
+		timers.UnitPathFor(job.Service)
+
+	disable, err := timers.BuildDisableNow(job)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	removeTimer, err := timers.BuildRemoveUnit(job.Unit)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+	removeService, err := timers.BuildRemoveUnit(job.Service)
+	if err != nil {
+		return schedule.WritePlan{}, err
+	}
+
+	commands := []schedule.Command{disable, removeTimer, removeService}
+	for _, unit := range dropIns {
+		remove, dropInErr := timers.BuildRemoveDropIn(unit)
+		if dropInErr != nil {
+			return schedule.WritePlan{}, dropInErr
+		}
+		commands = append(commands, remove)
+	}
+	commands = append(commands, timers.BuildDaemonReload(job))
+
+	return schedule.WritePlan{
+		Path:    timerPath,
+		Content: "",
+		// The diff is both files disappearing, which is the whole of what is
+		// about to happen and the last chance to read what they said.
+		Diff: schedule.Diff(timerPath, timerText, "") +
+			schedule.Diff(servicePath, serviceText, ""),
+		Validated: true,
+		Validation: "both files carry this tool's own \"" + timers.Marker +
+			"\" header and are in " + timers.UnitDir + ", so they are ours to remove",
+		Warning: "This removes the files. There is nothing to enable afterwards " +
+			"and nothing to undo it with: what the two units said is in the diff " +
+			"above and nowhere else.",
+		Commands: commands,
+	}, nil
+}
+
+// BuildDelete removes a cron line, or a timer this tool wrote.
 func (r *Real) BuildDelete(ctx context.Context, model schedule.Model,
 	job schedule.Job) (schedule.WritePlan, error) {
 	if job.Kind.Systemd() {
-		return schedule.WritePlan{}, fmt.Errorf(
-			"%s is a systemd timer: disabling it stops it, and removing its "+
-				"unit file is a job for the package that installed it", job.Unit)
+		return r.deleteTimer(job)
 	}
 	if _, err := r.half(job); err != nil {
 		return schedule.WritePlan{}, err
@@ -495,6 +649,25 @@ func (r *Real) BuildDelete(ctx context.Context, model schedule.Model,
 				"is not something this tool does", job.Name, job.File)
 	}
 	return r.writeCronTable(ctx, model, job, job.Line, "")
+}
+
+// deleteTimer removes the two unit files of a timer this tool wrote, and the
+// drop-ins it wrote beside them.
+func (r *Real) deleteTimer(job schedule.Job) (schedule.WritePlan, error) {
+	if _, err := r.half(job); err != nil {
+		return schedule.WritePlan{}, err
+	}
+	if err := checkOurs(job); err != nil {
+		return schedule.WritePlan{}, err
+	}
+	var dropIns []string
+	for _, unit := range []string{job.Unit, job.Service} {
+		if r.timers.DropInContent(unit) != "" {
+			dropIns = append(dropIns, unit)
+		}
+	}
+	return deleteTimerPlan(job, r.timers.UnitContent(job.Unit),
+		r.timers.UnitContent(job.Service), dropIns)
 }
 
 // BuildConvert generates a .timer and .service pair from a cron line.

@@ -159,6 +159,13 @@ type Job struct {
 	Persistent      bool
 	PersistentKnown bool
 
+	// ToolWritten marks a timer whose two unit files this tool wrote itself:
+	// they are in the local administrator's directory and they carry the tool's
+	// own header. It is the only thing that makes a unit one this tool will
+	// delete or re-point — a unit a package installed is that package's, and
+	// disabling it is as far as this tool goes.
+	ToolWritten bool
+
 	// Raw is the line or property the job was parsed from, shown on the detail
 	// screen so a reader can see what was actually read.
 	Raw string
@@ -319,12 +326,23 @@ type Capabilities struct {
 	SupportsCronEdit bool
 	// SupportsConvert reports that a cron line can be turned into a timer.
 	SupportsConvert bool
+	// SupportsAnyTable reports that a new cron line may go somewhere other than
+	// the caller's own crontab: another account's table, or a file in
+	// /etc/cron.d. It is true only when the tool is running as root, because
+	// those are the only two writes cron itself will not do for anybody else.
+	SupportsAnyTable bool
 
 	// DropInFor renders the drop-in path a timer's schedule change is written
 	// to, so the form can name the file before anything is built.
 	DropInFor func(unit string) string
 	// UnitDir is where a created timer is written.
 	UnitDir string
+	// CronDPathFor renders the path a named file in /etc/cron.d has, and
+	// ValidCronDName reports whether cron would read a file by that name at
+	// all. Both are here so the form can name and check its destination
+	// without reaching into the cron half itself.
+	CronDPathFor   func(name string) string
+	ValidCronDName func(name string) bool
 }
 
 // WritePlan is a change the user is about to make: what the file will look
@@ -396,7 +414,13 @@ type Backend interface {
 	// BuildSetSchedule changes when a job runs: a drop-in for a timer, a
 	// rewritten line for a cron job.
 	BuildSetSchedule(ctx context.Context, model Model, job Job, expression string) (WritePlan, error)
-	// BuildDelete removes a cron line.
+	// BuildSetTimerCommand changes what a timer runs, through a drop-in on the
+	// service it activates. It applies to a timer this tool wrote and to
+	// nothing else: re-pointing a unit a package installed is a change that
+	// package's next update would silently undo.
+	BuildSetTimerCommand(ctx context.Context, job Job, command string) (WritePlan, error)
+	// BuildDelete removes a cron line, or the two unit files of a timer this
+	// tool wrote.
 	BuildDelete(ctx context.Context, model Model, job Job) (WritePlan, error)
 	// BuildConvert generates a .timer and .service pair from a cron line. The
 	// pair is written but deliberately not enabled: two schedulers running the
