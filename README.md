@@ -131,7 +131,7 @@ Upgrades then arrive with the rest of your system updates.
 ### Any distribution, static binary
 
 ```sh
-curl -fsSL https://github.com/tui-tools/tui-cron/releases/download/v0.1.2/tui-cron_0.1.2_linux_amd64.tar.gz | tar -xz tui-cron
+curl -fsSL https://github.com/tui-tools/tui-cron/releases/download/v0.2.0/tui-cron_0.2.0_linux_amd64.tar.gz | tar -xz tui-cron
 sudo install -m0755 tui-cron /usr/local/bin/tui-cron
 ```
 
