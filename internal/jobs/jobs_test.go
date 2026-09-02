@@ -140,3 +140,87 @@ func TestTheFakeRefusesWhatTheRealBackendRefuses(t *testing.T) {
 		t.Errorf("the demo cannot delete the timer it says this tool wrote: %v", err)
 	}
 }
+
+// TestCreatedTimerAppearsOnTheList is the bug this file's create path had: the
+// two unit files were written and reloaded, and the timer was then in no list
+// the tool reads. systemd loads no unit that nothing references, so a timer
+// that was written and not enabled is not in `list-timers` and not in
+// `list-units` — it is only in the unit files on disk. The sample machine
+// models exactly that, so the demo shows the row a real machine now shows too,
+// and the row can be selected, enabled and deleted.
+func TestCreatedTimerAppearsOnTheList(t *testing.T) {
+	ctx := context.Background()
+	fake := NewFake()
+
+	before, err := fake.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	spec := schedule.NewTimer{
+		Name: "log-shipper", Calendar: "*-*-* 03:00:00",
+		ExecStart: "/usr/local/bin/log-shipper", Persistent: true,
+		Description: "Log shipper",
+	}
+	plan, err := fake.BuildCreate(ctx, before, spec)
+	if err != nil {
+		t.Fatalf("BuildCreate: %v", err)
+	}
+	for _, cmd := range plan.Commands {
+		if _, runErr := fake.Run(ctx, cmd); runErr != nil {
+			t.Fatalf("running %q: %v", cmd.String(), runErr)
+		}
+	}
+
+	after, err := fake.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	created, ok := findJob(after, "log-shipper.timer")
+	if !ok {
+		t.Fatalf("the timer that was just written is not on the list")
+	}
+	switch {
+	case created.Service != "log-shipper.service":
+		t.Errorf("the row activates %q", created.Service)
+	case created.Schedule != "*-*-* 03:00:00":
+		t.Errorf("the row shows the schedule %q", created.Schedule)
+	case created.Command != "/usr/local/bin/log-shipper":
+		t.Errorf("the row shows the command %q", created.Command)
+	case created.Enabled:
+		t.Errorf("the row claims the timer is enabled; nothing enabled it")
+	case created.NextNote == "":
+		t.Errorf("the row shows no reason for having no next run")
+	case !created.ToolWritten:
+		t.Errorf("the row is not marked as one this tool wrote, " +
+			"so it could be neither edited nor deleted")
+	}
+
+	// And what the tool wrote, the tool can take away again.
+	deletion, err := fake.BuildDelete(ctx, after, created)
+	if err != nil {
+		t.Fatalf("BuildDelete: %v", err)
+	}
+	for _, cmd := range deletion.Commands {
+		if _, runErr := fake.Run(ctx, cmd); runErr != nil {
+			t.Fatalf("running %q: %v", cmd.String(), runErr)
+		}
+	}
+	gone, err := fake.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, still := findJob(gone, "log-shipper.timer"); still {
+		t.Errorf("the timer is still on the list after being deleted")
+	}
+}
+
+// findJob looks a row up by unit name.
+func findJob(model schedule.Model, name string) (schedule.Job, bool) {
+	for _, job := range model.Jobs {
+		if job.Name == name {
+			return job, true
+		}
+	}
+	return schedule.Job{}, false
+}

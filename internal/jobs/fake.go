@@ -49,6 +49,12 @@ type Fake struct {
 	// commands are the ExecStart values a drop-in re-pointed a sample service
 	// at, keyed by the service unit.
 	commands map[string]string
+	// written are the unit files this tool created on the sample machine,
+	// keyed by path. A real systemd loads no unit that nothing references, so
+	// a new timer is not in `list-timers`; the real backend finds it in
+	// `list-unit-files` instead, and the sample machine has to show it the
+	// same way or --demo would lose the row the moment it is created.
+	written map[string]string
 }
 
 // NewFake builds the sample machine: six timers, one of which failed last
@@ -67,6 +73,7 @@ func NewFake() *Fake {
 func (f *Fake) reset() {
 	f.removed = map[string]bool{}
 	f.commands = map[string]string{}
+	f.written = map[string]string{}
 	f.tables = map[string]string{
 		crontab.TablePathFor(demoUser): demoUserTable,
 		crontab.SystemCrontab:          demoSystemCrontab,
@@ -99,6 +106,7 @@ func (f *Fake) rebuild() {
 		}
 		list = append(list, job)
 	}
+	list = append(list, f.writtenTimers()...)
 	// Every table the sample machine has, not only the three it started with:
 	// a line added to another account's crontab or to a new file in
 	// /etc/cron.d has to appear on the next reload the way it would on a real
@@ -448,6 +456,7 @@ func (f *Fake) applyRemove(argv []string) {
 		return
 	}
 	f.removed[path] = true
+	delete(f.written, path)
 	f.rebuild()
 }
 
@@ -527,6 +536,15 @@ func (f *Fake) applyInstall(argv []string) {
 		f.rebuild()
 		return
 	}
+	if strings.HasPrefix(destination, timers.UnitDir+"/") &&
+		!strings.Contains(destination, ".d/") {
+		// A whole unit file: the sample machine keeps it, the way a real one
+		// keeps what install put in /etc/systemd/system.
+		f.written[destination] = content
+		delete(f.removed, destination)
+		f.rebuild()
+		return
+	}
 	// A drop-in: the sample timer picks up the new schedule, or the sample
 	// service the new command, the way a real one does after the daemon-reload
 	// and the restart that follow.
@@ -551,6 +569,74 @@ func (f *Fake) applyInstall(argv []string) {
 			}
 		}
 	}
+}
+
+// writtenTimers turns the unit files created on the sample machine into rows.
+//
+// It is the demo's half of the same fix the real backend got: a timer that has
+// been written and not enabled is on disk and loaded by nothing, so it has to
+// be listed from the files rather than from what systemd is running. Only the
+// .timer files are walked; the .service beside each one is its command.
+func (f *Fake) writtenTimers() []schedule.Job {
+	paths := make([]string, 0, len(f.written))
+	for path := range f.written {
+		if strings.HasSuffix(path, ".timer") {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
+	jobs := make([]schedule.Job, 0, len(paths))
+	for _, path := range paths {
+		unit := pathBase(path)
+		timerText := f.written[path]
+		job := schedule.Job{
+			ID:          string(schedule.KindTimer) + ":" + unit,
+			Name:        unit,
+			Kind:        schedule.KindTimer,
+			Owner:       "root",
+			Unit:        unit,
+			File:        path,
+			Description: unitValue(timerText, "Description"),
+			Schedule:    unitValue(timerText, "OnCalendar"),
+			Service:     unitValue(timerText, "Unit"),
+			// Written, reloaded, and that is all: nothing has enabled it, so
+			// it is not armed and has never fired.
+			State:    "inactive",
+			Enabled:  false,
+			NextNote: "not armed: the timer unit is inactive",
+			Outcome:  schedule.OutcomeNever,
+			OutcomeDetail: "this timer has not fired since the machine last " +
+				"booted",
+			ToolWritten: timers.MarkedByTool(timerText),
+		}
+		if job.Schedule == "" {
+			job.Schedule, job.Monotonic = "—", true
+		} else {
+			job.Explain = schedule.DescribeCalendar(job.Schedule)
+		}
+		if value := unitValue(timerText, "Persistent"); value != "" {
+			job.Persistent, job.PersistentKnown = value == "true", true
+		}
+		if service, ok := f.written[timers.UnitPathFor(job.Service)]; ok {
+			job.Command = unitValue(service, "ExecStart")
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs
+}
+
+// unitValue reads the first `Key=value` of a unit file. The files it is given
+// are the ones this tool renders, so the only shape it has to understand is
+// the shape RenderUnits writes.
+func unitValue(text, key string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if value, found := strings.CutPrefix(strings.TrimSpace(line),
+			key+"="); found {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // demoTimerText is the sample timer's unit file, as the demo would have written
@@ -838,8 +924,14 @@ func (f *Fake) BuildDelete(_ context.Context, model schedule.Model,
 				dropIns = append(dropIns, unit)
 			}
 		}
-		return deleteTimerPlan(job, demoTimerText(job), demoServiceText(job),
-			dropIns)
+		timerText, serviceText := demoTimerText(job), demoServiceText(job)
+		if text, ok := f.written[timers.UnitPathFor(job.Unit)]; ok {
+			timerText = text
+		}
+		if text, ok := f.written[timers.UnitPathFor(job.Service)]; ok {
+			serviceText = text
+		}
+		return deleteTimerPlan(job, timerText, serviceText, dropIns)
 	}
 	if job.Kind == schedule.KindAnacronDir {
 		return schedule.WritePlan{}, fmt.Errorf(
@@ -882,6 +974,12 @@ func (f *Fake) BuildCreate(_ context.Context, _ schedule.Model,
 	timerPath, servicePath := timers.UnitPathsFor(name)
 	stagedTimer := "/tmp/tui-cron/" + name + ".timer"
 	stagedService := "/tmp/tui-cron/" + name + ".service"
+	// The sample machine's staging directory is a map keyed by the path the
+	// file will become, which is what the install hook reads. Without this the
+	// two units would be previewed and then installed as nothing, and the demo
+	// would create a timer it never shows.
+	f.staged[timerPath] = timer
+	f.staged[servicePath] = service
 
 	installService, err := timers.BuildInstall(stagedService, servicePath)
 	if err != nil {

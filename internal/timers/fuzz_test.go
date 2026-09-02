@@ -123,6 +123,28 @@ func FuzzParseTimerListText(f *testing.F) {
 	})
 }
 
+func FuzzParseUnitFileList(f *testing.F) {
+	seed(f, "list-unit-files-timer.txt")
+	seed(f, "list-unit-files-timer-user.txt")
+	f.Add("weird@.timer static -")
+	f.Add("aliased.timer alias -")
+	f.Fuzz(func(t *testing.T, out string) {
+		for _, unit := range ParseUnitFileList(out) {
+			// Every name here is passed to `systemctl show`, so the same rule
+			// applies as to the loaded lists, plus one: a template is not a
+			// unit and must never reach that argv.
+			switch {
+			case unit == "":
+				t.Fatalf("returned a blank unit name")
+			case !strings.HasSuffix(unit, ".timer"):
+				t.Fatalf("returned %q, which is not a timer", unit)
+			case strings.Contains(unit, "@."):
+				t.Fatalf("returned the template %q", unit)
+			}
+		}
+	})
+}
+
 func FuzzParseTimestamp(f *testing.F) {
 	f.Add("Sun 2026-08-30 00:09:19 -03")
 	f.Add("Sun 2026-08-30 00:09:19 UTC")

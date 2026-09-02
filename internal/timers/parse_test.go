@@ -78,6 +78,63 @@ func TestParseTimerListText(t *testing.T) {
 	}
 }
 
+// TestParseUnitFileList reads the unit files on disk, which is the list that
+// carries a timer nothing has loaded yet.
+func TestParseUnitFileList(t *testing.T) {
+	units := ParseUnitFileList(fixture(t, "list-unit-files-timer.txt"))
+	if len(units) == 0 {
+		t.Fatalf("no timers were read from the unit-file table")
+	}
+	// The two captures are from the same machine, so every loaded timer has a
+	// unit file: the disk list is a superset of the loaded one.
+	for _, unit := range ParseTimerListText(fixture(t, "list-units-timer.txt")) {
+		if !contains(units, unit) {
+			t.Errorf("%q is loaded and has no unit file in the list", unit)
+		}
+	}
+	// And it carries more than the loaded list does: this one is installed and
+	// disabled, so systemd has not loaded it and list-units does not have it.
+	if !contains(units, "fwupd-refresh.timer") {
+		t.Errorf("the disabled fwupd-refresh.timer is missing: %v", units)
+	}
+	for _, unit := range units {
+		if strings.Contains(unit, "@.") {
+			t.Errorf("%q is a template, not a unit that can be shown", unit)
+		}
+	}
+	// An alias row names a unit the list already carries under its own name.
+	if contains(units, "dnf5-makecache.timer") {
+		t.Errorf("the alias row was kept: %v", units)
+	}
+}
+
+// TestParseUnitFileListFindsAToolWrittenTimer is the bug this list was added
+// for: a timer written and not enabled is on disk and in none of the lists of
+// loaded units, so the tool that wrote it had no row to select.
+func TestParseUnitFileListFindsAToolWrittenTimer(t *testing.T) {
+	units := ParseUnitFileList(fixture(t, "list-unit-files-timer-user.txt"))
+	if !contains(units, "tui-cron-nightly-backup.timer") {
+		t.Errorf("the freshly written timer is not in the list: %v", units)
+	}
+}
+
+// TestMergeUnits keeps the loaded timers where they were and appends the rest.
+func TestMergeUnits(t *testing.T) {
+	got := mergeUnits(
+		[]string{"logrotate.timer", "fstrim.timer"},
+		[]string{"fstrim.timer", "tui-cron-nightly-backup.timer"})
+	want := []string{"logrotate.timer", "fstrim.timer",
+		"tui-cron-nightly-backup.timer"}
+	if len(got) != len(want) {
+		t.Fatalf("mergeUnits() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("mergeUnits() = %v, want %v", got, want)
+		}
+	}
+}
+
 // TestJobFromTimer reads one real timer end to end: its calendar, its English,
 // its next and last runs, and the Persistent setting the warning turns on.
 func TestJobFromTimer(t *testing.T) {

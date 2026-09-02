@@ -95,6 +95,40 @@ func ParseTimerListText(out string) []string {
 	return units
 }
 
+// ParseUnitFileList reads the unit names out of
+// `systemctl list-unit-files --type=timer --no-legend --plain`.
+//
+// That table answers a different question from list-timers and list-units:
+// those two enumerate the units systemd has *loaded*, and systemd loads
+// nothing that no other unit references. A timer written to disk and not yet
+// enabled is therefore in neither, which is why this list is read as well.
+//
+// Two rows are dropped. A template (`name@.timer`) is not a unit that can be
+// shown or started, only a pattern for instances; an alias row names a second
+// name for a unit the other lists already carry, and following it would show
+// the same timer twice.
+func ParseUnitFileList(out string) []string {
+	var units []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		name := UnescapeUnitName(fields[0])
+		if !strings.HasSuffix(name, ".timer") {
+			continue
+		}
+		if strings.Contains(name, "@.") {
+			continue
+		}
+		if len(fields) > 1 && fields[1] == "alias" {
+			continue
+		}
+		units = append(units, name)
+	}
+	return units
+}
+
 // UnescapeUnitName reverses systemd's `\xNN` escaping, which shows up in the
 // names of units generated from a path. An escape that does not parse is left
 // exactly as it was: a name we cannot decode is still the name the user has to
