@@ -251,6 +251,15 @@ tool says the user timers were not read rather than that there are none.
 and `n` runs the job now — which starts the *service*, not the timer, because
 arming a timer runs nothing.
 
+The list is built from the timers systemd has **loaded** and from the timer
+**unit files on disk**, merged. Both are needed: systemd loads no unit that
+nothing references, so a timer written with `c` and not yet enabled is in
+neither `systemctl list-timers` nor `systemctl list-units --type=timer`. It
+would be on disk, correct, and invisible in the tool that wrote it — with no
+row to select, and therefore no way to enable, run or remove it. Such a timer
+shows up on the list straight away, with `not armed` in place of a next run
+until `E` enables it.
+
 ### The timers this tool wrote are the only ones it will remove
 
 A timer created with `c` or converted with `t` gets a header in both of its
@@ -445,7 +454,7 @@ $ tui-cron --check | head -20
 ```
 
 It exists so a test can assert on what the tool *parsed* rather than on what it
-painted — that the timer count matches `systemctl list-units`, that cron is
+painted — that the timer count matches systemd's own lists, that cron is
 reported present exactly when a `crontab` binary is there, and that the five
 kinds sum to the total.
 

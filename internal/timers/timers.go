@@ -335,12 +335,38 @@ func (b *Backend) loadManager(ctx context.Context, user bool) ([]schedule.Job, e
 
 // listTimers enumerates the timer units of one manager.
 //
-// `list-timers --output=json` is used when the running systemd has it, and
-// `list-units --type=timer` when it does not. The fallback loses nothing: the
-// JSON carries the next and last elapse, and both of those are read again from
-// `systemctl show` for every timer anyway, because the JSON does not carry the
-// calendar expression and that is the column this tool is built around.
+// Two lists are read and merged, because neither is complete on its own.
+//
+// The loaded timers come from `list-timers --output=json` when the running
+// systemd has it, and from `list-units --type=timer` when it does not. The
+// fallback loses nothing: the JSON carries the next and last elapse, and both
+// of those are read again from `systemctl show` for every timer anyway,
+// because the JSON does not carry the calendar expression and that is the
+// column this tool is built around.
+//
+// The unit files on disk come from `list-unit-files --type=timer`. systemd
+// loads no unit that nothing references, so a timer this tool has just written
+// and not enabled is in none of the lists above — it would be on disk,
+// correct, and invisible in the tool that wrote it, with no row to select and
+// therefore no way to enable, run or delete it. Reading the unit files as well
+// puts it on the list the moment it exists.
 func (b *Backend) listTimers(ctx context.Context, user bool) ([]string, error) {
+	loaded, err := b.listLoadedTimers(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	// The unit-file list is an addition, not a requirement: an old or odd
+	// systemctl that refuses it leaves the loaded timers exactly as they were.
+	argv := b.systemctlArgv(user, "list-unit-files", "--type=timer",
+		"--no-legend", "--plain", "--no-pager")
+	if out, fileErr := b.systemctl.Read(ctx, argv...); fileErr == nil {
+		loaded = mergeUnits(loaded, ParseUnitFileList(out))
+	}
+	return loaded, nil
+}
+
+// listLoadedTimers enumerates the timer units the manager currently has loaded.
+func (b *Backend) listLoadedTimers(ctx context.Context, user bool) ([]string, error) {
 	if b.caps.Has(FeatureTimersJSON) {
 		argv := b.systemctlArgv(user, "list-timers", "--all", "--output=json",
 			"--no-pager")
@@ -362,6 +388,24 @@ func (b *Backend) listTimers(ctx context.Context, user bool) ([]string, error) {
 		return nil, err
 	}
 	return ParseTimerListText(out), nil
+}
+
+// mergeUnits appends the names of extra that first does not already have,
+// keeping the order of the loaded list: the timers that are running stay where
+// the reader last saw them, and anything only on disk lands after them.
+func mergeUnits(first, extra []string) []string {
+	seen := make(map[string]struct{}, len(first)+len(extra))
+	for _, unit := range first {
+		seen[unit] = struct{}{}
+	}
+	for _, unit := range extra {
+		if _, ok := seen[unit]; ok {
+			continue
+		}
+		seen[unit] = struct{}{}
+		first = append(first, unit)
+	}
+	return first
 }
 
 // show reads one unit's properties.

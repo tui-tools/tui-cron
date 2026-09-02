@@ -1,0 +1,4 @@
+grub-boot-success.timer       enabled  enabled
+podman-auto-update.timer      disabled disabled
+systemd-tmpfiles-clean.timer  enabled  enabled
+tui-cron-nightly-backup.timer disabled disabled

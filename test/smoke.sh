@@ -202,14 +202,23 @@ check "the timers were read" "$bin --check" '"timer": [1-9][0-9]*'
 #    catches an enumeration that half-worked: below systemd 250 the JSON flag
 #    does not exist and the list comes from `list-units` instead, and both paths
 #    have to produce the same set.
-want=$(systemctl list-units --type=timer --all --plain --no-legend --no-pager 2>/dev/null |
-  awk '$1 ~ /\.timer$/' | wc -l)
+#
+#    The set is the loaded timers *and* the timer unit files on disk. systemd
+#    loads no unit that nothing references, so an installed-but-disabled timer
+#    — fwupd-refresh.timer on most machines, and any timer this tool has just
+#    written — is on disk and in no list of loaded units. Templates and alias
+#    rows are dropped: neither is a unit that can be shown.
+want=$( { systemctl list-units --type=timer --all --plain --no-legend --no-pager 2>/dev/null |
+    awk '$1 ~ /\.timer$/ {print $1}'
+  systemctl list-unit-files --type=timer --no-legend --plain --no-pager 2>/dev/null |
+    awk '$1 ~ /\.timer$/ && $1 !~ /@\./ && $2 != "alias" {print $1}'
+} | sort -u | wc -l)
 got=$(sed -n 's/.*"timer": \([0-9]*\).*/\1/p' <<<"$report" | head -1)
 if [[ -n $got && $got -eq $want ]]; then
-  printf 'PASS  the %s timers match systemctl list-units\n' "$want"
+  printf 'PASS  the %s timers match systemd own lists\n' "$want"
   pass=$((pass + 1))
 else
-  printf 'FAIL  the tool reports %s timers, systemctl lists %s\n' "${got:-none}" "$want"
+  printf 'FAIL  the tool reports %s timers, systemd lists %s\n' "${got:-none}" "$want"
   fail=$((fail + 1))
 fi
 
