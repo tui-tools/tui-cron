@@ -118,7 +118,7 @@ func TestCalendarArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCalendar: %v", err)
 	}
-	want := "systemd-analyze calendar --iterations=5 *-*-* 03:00:00"
+	want := "systemd-analyze calendar --iterations=5 '*-*-* 03:00:00'"
 	if got := cmd.String(); got != want {
 		t.Errorf("BuildCalendar = %q, want %q", got, want)
 	}
