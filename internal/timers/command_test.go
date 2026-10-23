@@ -485,3 +485,25 @@ func TestToolWroteRefusesWhatIsNotOurs(t *testing.T) {
 		t.Errorf("NotOursReason does not name the unit: %q", reason)
 	}
 }
+
+// TestRemoveDropInDirOnlyEverRemovesAnEmptyDirectory: the drop-in directory is
+// removed with rmdir, which refuses a directory with anything in it, and the
+// flag that keeps a non-empty one from failing the deletion. A drop-in written
+// by somebody else keeps its directory.
+func TestRemoveDropInDirOnlyEverRemovesAnEmptyDirectory(t *testing.T) {
+	cmd, err := BuildRemoveDropInDir("backup.timer")
+	if err != nil {
+		t.Fatalf("BuildRemoveDropInDir: %v", err)
+	}
+	want := "rmdir --ignore-fail-on-non-empty -- /etc/systemd/system/backup.timer.d"
+	if got := cmd.String(); got != want {
+		t.Errorf("BuildRemoveDropInDir = %q, want %q", got, want)
+	}
+	for _, unit := range []string{
+		"", "backup", "../../etc", "backup.timer /etc", "backup.timer\nrm",
+	} {
+		if _, err := BuildRemoveDropInDir(unit); err == nil {
+			t.Errorf("BuildRemoveDropInDir accepted %q", unit)
+		}
+	}
+}

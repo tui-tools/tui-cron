@@ -862,6 +862,51 @@ func TestDeletingOurOwnTimerAsksForTheNameFirst(t *testing.T) {
 	}
 }
 
+// TestDeletingATimerAfterAScheduleChangeLeavesNoDirectory: a schedule change
+// creates <unit>.d with install -d and puts the drop-in in it. Deleting the
+// timer afterwards has to take both away, or an empty directory is left in
+// /etc/systemd/system that nothing explains.
+func TestDeletingATimerAfterAScheduleChangeLeavesNoDirectory(t *testing.T) {
+	a, _ := newTestApp(t)
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+	drain(t, a, press(a, "e"))
+	if a.mode != modeForm {
+		t.Fatalf("e did not open the editor (status: %s)", a.status)
+	}
+	a.form.fields[0].input.SetValue("*-*-* 03:15:00")
+	a.form.reread()
+	drain(t, a, press(a, "enter"))
+	if !strings.Contains(a.confirm.Command,
+		"install -d -m 755 /etc/systemd/system/mirror-sync.timer.d") {
+		t.Fatalf("the schedule change does not create the directory:\n%s",
+			a.confirm.Command)
+	}
+	drain(t, a, press(a, "y"))
+
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+	drain(t, a, press(a, "d"))
+	drain(t, a, press(a, "mirror-sync.timer"))
+	drain(t, a, press(a, "enter"))
+	if a.mode != modeConfirm {
+		t.Fatalf("the typed name did not open the dialog (status: %s)", a.status)
+	}
+	for _, line := range []string{
+		"rm -f -- /etc/systemd/system/mirror-sync.timer.d/90-tui-cron.conf",
+		"rmdir --ignore-fail-on-non-empty -- /etc/systemd/system/mirror-sync.timer.d",
+	} {
+		if !strings.Contains(a.confirm.Command, line) {
+			t.Errorf("the preview is missing %q:\n%s", line, a.confirm.Command)
+		}
+	}
+	// The directory goes after the file in it, and before systemd re-reads.
+	rmFile := strings.Index(a.confirm.Command, "90-tui-cron.conf")
+	rmDir := strings.Index(a.confirm.Command, "rmdir")
+	reload := strings.Index(a.confirm.Command, "daemon-reload")
+	if rmFile >= rmDir || rmDir >= reload {
+		t.Errorf("the deletion is out of order:\n%s", a.confirm.Command)
+	}
+}
+
 // TestATypoDeletesNothing: the prompt is a gate, not a formality.
 func TestATypoDeletesNothing(t *testing.T) {
 	a, backend := newTestApp(t)

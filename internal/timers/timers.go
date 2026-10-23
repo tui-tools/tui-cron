@@ -129,6 +129,17 @@ func NotOursReason(job schedule.Job) string {
 // DropInDirFor is the directory that drop-in lives in.
 func DropInDirFor(unit string) string { return UnitDir + "/" + unit + ".d" }
 
+// HasDropInDir reports whether a unit has a drop-in directory in UnitDir. A
+// deletion asks, because tui-cron 0.2.4 and older removed the drop-in and left
+// its empty directory behind, and the next deletion is the moment to tidy it.
+func (b *Backend) HasDropInDir(unit string) bool {
+	if checkUnit(unit) != nil {
+		return false
+	}
+	info, err := os.Stat(DropInDirFor(unit))
+	return err == nil && info.IsDir()
+}
+
 // searchPaths are the locations a non-root PATH commonly omits.
 var searchPaths = map[string][]string{
 	"systemctl":       {"/usr/bin/systemctl", "/bin/systemctl"},
@@ -136,6 +147,7 @@ var searchPaths = map[string][]string{
 	"journalctl":      {"/usr/bin/journalctl", "/bin/journalctl"},
 	"install":         {"/usr/bin/install", "/bin/install"},
 	"rm":              {"/usr/bin/rm", "/bin/rm"},
+	"rmdir":           {"/usr/bin/rmdir", "/bin/rmdir"},
 }
 
 // installHint is appended to the "not found" error.
@@ -152,6 +164,7 @@ type Backend struct {
 	journal   *runner.Runner
 	install   *runner.Runner
 	remove    *runner.Runner
+	rmdir     *runner.Runner
 
 	// caps gates what only exists on a new enough systemd. It comes from the
 	// manifest, so no version number is written into this file.
@@ -177,6 +190,7 @@ func New(sudoPrefix []string, caps compat.Caps) (*Backend, error) {
 		{"journalctl", &b.journal, &unprivileged},
 		{"install", &b.install, nil},
 		{"rm", &b.remove, nil},
+		{"rmdir", &b.rmdir, nil},
 	} {
 		r, err := runner.New(runner.Options{
 			Bin:             spec.bin,
@@ -241,6 +255,8 @@ func (b *Backend) runnerFor(cmd schedule.Command) *runner.Runner {
 		return b.install
 	case "rm":
 		return b.remove
+	case "rmdir":
+		return b.rmdir
 	default:
 		return nil
 	}

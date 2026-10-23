@@ -518,7 +518,7 @@ Every one of these is previewed and confirmed first.
 | --- | --- |
 | `e` on a timer | `systemd-analyze calendar <expr>` (a read, before the question), then `install -d -m 755 /etc/systemd/system/<t>.timer.d`, `install -m 644 <staged> …/90-tui-cron.conf`, `systemctl daemon-reload`, `systemctl restart <t>.timer` |
 | `e` on the command of a timer this tool wrote | `install -d -m 755 /etc/systemd/system/<n>.service.d`, `install -m 644 <staged> …/90-tui-cron.conf`, `systemctl daemon-reload` — the timer is not restarted, because the timer did not change |
-| `d` on a timer this tool wrote | `systemctl disable --now <t>.timer`, `rm -f -- /etc/systemd/system/<t>.timer`, the same for `<n>.service` and for any drop-in this tool left, then `systemctl daemon-reload` |
+| `d` on a timer this tool wrote | `systemctl disable --now <t>.timer`, `rm -f -- /etc/systemd/system/<t>.timer`, the same for `<n>.service` and for any drop-in this tool left, `rmdir --ignore-fail-on-non-empty -- /etc/systemd/system/<t>.timer.d` for the directory that drop-in was in (removed only when nothing else is in it), then `systemctl daemon-reload` |
 | `e`/`a`/`d` on a cron line | `crontab <staged file>` for your own table, `crontab -u <who> <staged file>` for another account's, or `install -m 644 <staged> /etc/cron.d/<name>` for a system one |
 | `c` / `t` | `install -m 644 <staged> /etc/systemd/system/<name>.service`, the same for `.timer`, then `systemctl daemon-reload` — and nothing else: the timer is **not** enabled |
 | `E` / `D` | `systemctl enable` / `systemctl disable <t>.timer` |
@@ -529,10 +529,10 @@ Nothing else. A timer in your own manager gets `--user` in front of the verb,
 read from the job rather than assumed. There is no code path that writes to
 `/etc` other than those `install` commands, each with a destination this tool
 checks rather than a parameter it trusts, and none of them can name a unit file
-a distribution shipped. The `rm` commands are the same: the path is assembled
-from a checked unit name and can only ever be a file directly inside
-`/etc/systemd/system`, so there is no way to point one at `/usr/lib` or
-anywhere else at all.
+a distribution shipped. The `rm` and `rmdir` commands are the same: the path is
+assembled from a checked unit name and can only ever be a unit file, or a
+`<unit>.d` drop-in directory, directly inside `/etc/systemd/system`, so there is
+no way to point one at `/usr/lib` or anywhere else at all.
 
 ## Keys
 
