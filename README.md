@@ -343,8 +343,10 @@ of the timer, because a reload alone would leave it armed on the old schedule.
 
 ## Changing a crontab, through cron's own interface
 
-A crontab is never edited as a file. `/var/spool/cron` is cron's own directory,
-and writing into it behind cron's back skips the syntax check and, on Debian,
+A crontab is never edited as a file. The spool — `/var/spool/cron` with
+cronie (Fedora, RHEL, Arch), `/var/spool/cron/crontabs` with Debian's and
+Ubuntu's cron, read from the machine rather than assumed — is cron's own
+directory, and writing into it behind cron's back skips the syntax check and, on Debian,
 the ownership rules cron enforces — so `crontab <file>` is what runs, which is
 what `crontab -e` runs too.
 

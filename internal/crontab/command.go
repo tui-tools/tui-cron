@@ -53,10 +53,12 @@ func UnderCronD(path string) bool {
 	return found && ValidCronDName(rest)
 }
 
-// TablePathFor is where cron keeps one account's table. It is reported so the
-// detail screen can name the file, and never opened: `crontab` is the only
-// thing that reads or writes it.
-func TablePathFor(owner string) string { return "/var/spool/cron/" + owner }
+// TablePathIn is where cron keeps one account's table, given the spool
+// directory this machine's cron uses. It is reported so the detail screen can
+// name the file, and never opened: `crontab` is the only thing that reads or
+// writes it. Which directory that is depends on the cron implementation, and
+// SpoolDir in crontab.go is what asks the machine.
+func TablePathIn(spoolDir, owner string) string { return spoolDir + "/" + owner }
 
 // CronDPathFor is where a named table in /etc/cron.d lives. A name cron would
 // not read is returned as the empty string rather than as a path, so a caller
