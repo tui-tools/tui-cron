@@ -589,7 +589,11 @@ func (a *app) writeBody(write schedule.WritePlan) string {
 	if write.Warning != "" {
 		parts = append(parts, write.Warning)
 	}
-	parts = append(parts, a.diffForDialog(write.Diff))
+	// The diff goes in whole. A conversion or a deletion diffs two units, which
+	// is often taller than the terminal; the kit's dialog scrolls a body that
+	// does not fit (j/k, pgup/pgdn) and says so on a pinned line, so every line
+	// of what is about to be written or removed can be read before y.
+	parts = append(parts, write.Diff)
 	return strings.Join(parts, "\n\n")
 }
 

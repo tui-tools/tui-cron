@@ -393,9 +393,10 @@ user field where the format has one, and the command.
 
 ## Converting a cron line to a timer
 
-`t` generates a `.timer` and `.service` pair from the selected cron line,
-previews both, writes them to `/etc/systemd/system` — and **does not enable the
-timer**, and does not touch the cron line. Two schedulers running the same job
+`t` generates a `.timer` and `.service` pair from the selected cron line and
+previews both, whole (a dialog taller than the terminal scrolls with `j`/`k`
+and `pgup`/`pgdn`, and says so). It writes them to `/etc/systemd/system`, and
+it **does not enable the timer** and does not touch the cron line. Two schedulers running the same job
 is worse than one running it in the old place, so the conversion is a draft to
 read, enable, and then remove the line behind. Doing any of that for you would
 be doing the dangerous half first.
@@ -549,6 +550,11 @@ anywhere else at all.
 | `R` | Re-read both schedulers |
 | `?` | Help |
 | `q` | Quit |
+
+In a **confirm dialog**: `y` runs what it shows and `n` cancels. A change taller
+than the terminal — a conversion diffs two whole units — scrolls with `j`/`k`,
+`pgup`/`pgdn` and `home`/`end`, and a line under it says which part is on
+screen; the command preview is at the end.
 
 In a **form**: `tab` moves between fields, `←`/`→` cycles a value, `space` opens
 the list, `enter` builds the change and shows it, `esc` cancels. The reading

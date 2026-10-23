@@ -407,16 +407,21 @@ func TestConvertingACronLineWritesAnUnenabledTimer(t *testing.T) {
 		t.Errorf("the generated timer does not carry the converted schedule:\n%s",
 			a.confirm.Body)
 	}
-	// Two whole units is more diff than a dialog can hold, so it is trimmed
-	// from the bottom and says how much was left out. What must survive the
-	// trim is the timer, because that is the half carrying the schedule.
-	if !strings.Contains(a.confirm.Body, "more diff lines") {
-		t.Errorf("a diff longer than the dialog was not trimmed:\n%s", a.confirm.Body)
+	// Both units are in the dialog whole: the user confirms the service as
+	// much as the timer, so neither may be cut off.
+	if strings.Contains(a.confirm.Body, "more diff lines") {
+		t.Errorf("the diff was trimmed:\n%s", a.confirm.Body)
+	}
+	for _, want := range []string{"[Timer]", "[Service]", "ExecStart="} {
+		if !strings.Contains(a.confirm.Body, want) {
+			t.Errorf("the dialog does not show %q:\n%s", want, a.confirm.Body)
+		}
 	}
 	if strings.Index(a.confirm.Body, ".timer") >
 		strings.Index(a.confirm.Body, ".service") {
 		t.Errorf("the service is diffed above the timer:\n%s", a.confirm.Body)
 	}
+	assertDialogScrollsToTheEnd(t, a, "ExecStart=")
 
 	drain(t, a, press(a, "y"))
 	for _, cmd := range backend.Ran() {
@@ -1070,5 +1075,31 @@ func TestWithoutRootTheAddFormHasNoTarget(t *testing.T) {
 	}
 	if !strings.Contains(form.title, "ana") {
 		t.Errorf("form title = %q, want it to name this account's table", form.title)
+	}
+}
+
+// assertDialogScrollsToTheEnd renders the open confirm dialog at the test
+// terminal's size and checks that a body too tall for it scrolls: the first
+// screen says how to scroll, and scrolling to the end reaches the last unit
+// line and the command preview. A body that was simply clipped would never show
+// either.
+func assertDialogScrollsToTheEnd(t *testing.T, a *app, last string) {
+	t.Helper()
+	first := a.View()
+	if !strings.Contains(first, "scroll") {
+		t.Fatalf("a body taller than the terminal shows no scroll hint:\n%s", first)
+	}
+	if strings.Contains(first, last) {
+		t.Fatalf("the test body fits the terminal, so it proves nothing:\n%s", first)
+	}
+	a.confirm.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	end := a.View()
+	for _, want := range []string{last, "Command to run:", "daemon-reload"} {
+		if !strings.Contains(end, want) {
+			t.Errorf("scrolled to the end, the dialog does not show %q:\n%s", want, end)
+		}
+	}
+	if a.mode != modeConfirm || a.confirm.Done {
+		t.Fatalf("scrolling resolved the dialog")
 	}
 }
