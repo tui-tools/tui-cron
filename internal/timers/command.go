@@ -204,6 +204,27 @@ func BuildRemoveDropIn(unit string) (schedule.Command, error) {
 	}, nil
 }
 
+// BuildRemoveDropInDir deletes the drop-in directory this tool created for a
+// unit, but only when it is empty.
+//
+// `install -d` made the directory for the drop-in, so removing the drop-in
+// alone leaves an empty <unit>.d behind — litter in the administrator's
+// directory with nothing to say who put it there. `rmdir` never removes a
+// directory with anything in it, and --ignore-fail-on-non-empty makes that a
+// quiet success rather than an error: a drop-in somebody else wrote beside ours
+// keeps its directory, and the deletion still completes.
+func BuildRemoveDropInDir(unit string) (schedule.Command, error) {
+	if err := checkUnit(unit); err != nil {
+		return schedule.Command{}, err
+	}
+	dir := DropInDirFor(unit)
+	return schedule.Command{
+		Argv:        []string{"rmdir", "--ignore-fail-on-non-empty", "--", dir},
+		Description: "Remove " + dir + " if nothing else is in it",
+		Destructive: true,
+	}, nil
+}
+
 // BuildDisableNow stops a unit and stops it starting at boot, in one call. It
 // is the first half of removing a timer: a unit file deleted while systemd
 // still has the unit loaded leaves a timer armed with no file behind it, which

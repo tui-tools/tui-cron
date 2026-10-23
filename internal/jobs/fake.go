@@ -20,10 +20,17 @@ var demoNow = time.Date(2026, 8, 30, 9, 41, 0, 0, time.UTC)
 // demoUser is the account the sample machine's crontab belongs to.
 const demoUser = "ana"
 
-// spoolPrefix is where cron keeps the per-account tables. It is taken from the
-// cron half rather than written down again, so a path this file recognises as a
-// crontab is one that half would have built.
-var spoolPrefix = crontab.TablePathFor("")
+// spoolPrefix is where cron keeps the per-account tables on the sample
+// machine, which runs cronie. It is fixed rather than read from the host the
+// demo happens to run on, so the demo, the README frames and the tests show the
+// same paths everywhere; the path itself is built by the cron half, so a path
+// this file recognises as a crontab is one that half would have built.
+var spoolPrefix = demoTablePath("")
+
+// demoTablePath is where the sample machine keeps one account's crontab.
+func demoTablePath(owner string) string {
+	return crontab.TablePathIn(crontab.SpoolDirCronie, owner)
+}
 
 // Fake is an in-memory machine carrying both schedulers. It backs --demo and
 // the tests: every key works, every command is built and previewed exactly as
@@ -75,9 +82,9 @@ func (f *Fake) reset() {
 	f.commands = map[string]string{}
 	f.written = map[string]string{}
 	f.tables = map[string]string{
-		crontab.TablePathFor(demoUser): demoUserTable,
-		crontab.SystemCrontab:          demoSystemCrontab,
-		crontab.CronDDir + "/0hourly":  demoCronD,
+		demoTablePath(demoUser):       demoUserTable,
+		crontab.SystemCrontab:         demoSystemCrontab,
+		crontab.CronDDir + "/0hourly": demoCronD,
 	}
 	f.model = schedule.Model{
 		Backend: "host",
@@ -516,7 +523,7 @@ func (f *Fake) applyCrontab(argv []string) {
 	if len(rest) != 1 {
 		return
 	}
-	path := crontab.TablePathFor(owner)
+	path := demoTablePath(owner)
 	if content, ok := f.staged[path]; ok {
 		f.tables[path] = content
 		f.rebuild()
@@ -855,7 +862,7 @@ func (f *Fake) writeCronTable(model schedule.Model, job schedule.Job,
 	line int, replacement string) (schedule.WritePlan, error) {
 	path := job.File
 	if job.Kind == schedule.KindCrontab {
-		path = crontab.TablePathFor(job.Owner)
+		path = demoTablePath(job.Owner)
 	}
 	before := f.tables[path]
 	content, err := crontab.ReplaceLine(before, line, replacement)

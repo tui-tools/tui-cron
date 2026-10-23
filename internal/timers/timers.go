@@ -35,6 +35,7 @@ import (
 	"github.com/tui-tools/tui-cron/internal/schedule"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/runner"
+	"golang.org/x/sys/unix"
 )
 
 // FeatureTimersJSON is `systemctl list-timers --output=json`, which arrived in
@@ -128,6 +129,17 @@ func NotOursReason(job schedule.Job) string {
 // DropInDirFor is the directory that drop-in lives in.
 func DropInDirFor(unit string) string { return UnitDir + "/" + unit + ".d" }
 
+// HasDropInDir reports whether a unit has a drop-in directory in UnitDir. A
+// deletion asks, because tui-cron 0.2.4 and older removed the drop-in and left
+// its empty directory behind, and the next deletion is the moment to tidy it.
+func (b *Backend) HasDropInDir(unit string) bool {
+	if checkUnit(unit) != nil {
+		return false
+	}
+	info, err := os.Stat(DropInDirFor(unit))
+	return err == nil && info.IsDir()
+}
+
 // searchPaths are the locations a non-root PATH commonly omits.
 var searchPaths = map[string][]string{
 	"systemctl":       {"/usr/bin/systemctl", "/bin/systemctl"},
@@ -135,6 +147,7 @@ var searchPaths = map[string][]string{
 	"journalctl":      {"/usr/bin/journalctl", "/bin/journalctl"},
 	"install":         {"/usr/bin/install", "/bin/install"},
 	"rm":              {"/usr/bin/rm", "/bin/rm"},
+	"rmdir":           {"/usr/bin/rmdir", "/bin/rmdir"},
 }
 
 // installHint is appended to the "not found" error.
@@ -151,6 +164,7 @@ type Backend struct {
 	journal   *runner.Runner
 	install   *runner.Runner
 	remove    *runner.Runner
+	rmdir     *runner.Runner
 
 	// caps gates what only exists on a new enough systemd. It comes from the
 	// manifest, so no version number is written into this file.
@@ -176,6 +190,7 @@ func New(sudoPrefix []string, caps compat.Caps) (*Backend, error) {
 		{"journalctl", &b.journal, &unprivileged},
 		{"install", &b.install, nil},
 		{"rm", &b.remove, nil},
+		{"rmdir", &b.rmdir, nil},
 	} {
 		r, err := runner.New(runner.Options{
 			Bin:             spec.bin,
@@ -240,6 +255,8 @@ func (b *Backend) runnerFor(cmd schedule.Command) *runner.Runner {
 		return b.install
 	case "rm":
 		return b.remove
+	case "rmdir":
+		return b.rmdir
 	default:
 		return nil
 	}
@@ -315,9 +332,13 @@ func (b *Backend) loadManager(ctx context.Context, user bool) ([]schedule.Job, e
 		if showErr != nil {
 			continue
 		}
-		job := JobFromTimer(ParseProperties(out), kind, owner)
+		properties := ParseProperties(out)
+		job := JobFromTimer(properties, kind, owner)
 		if job.ID == "" {
 			continue
+		}
+		if now, mono, ok := clockNow(); ok {
+			ApplyMonotonicNext(&job, properties, now, mono)
 		}
 		if job.Service != "" {
 			if serviceOut, serviceErr := b.show(ctx, user, job.Service,
@@ -565,6 +586,19 @@ func (b *Backend) DropInContent(unit string) string {
 	return string(raw)
 }
 
+// clockNow reads the wall clock and CLOCK_MONOTONIC together, which is what a
+// monotonic next elapse is converted with. systemd reports that elapse on
+// CLOCK_MONOTONIC (it maps a CLOCK_BOOTTIME timer onto it before publishing),
+// and a container shares the host kernel's clock, so the reading here and the
+// one systemd made agree.
+func clockNow() (time.Time, time.Duration, bool) {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
+		return time.Time{}, 0, false
+	}
+	return time.Now(), time.Duration(ts.Nano()), true
+}
+
 // UnitContent returns what a unit file in UnitDir says today, empty when there
 // is none. Like DropInContent it is read unprivileged: /etc/systemd/system is
 // world readable on every distribution this tool targets, and the text is what
@@ -596,7 +630,8 @@ func currentUser() string {
 // is the output of the command the tool really runs.
 var timerProperties = []string{
 	"Id", "Unit", "Description", "TimersCalendar", "TimersMonotonic",
-	"NextElapseUSecRealtime", "LastTriggerUSec", "Persistent", "AccuracyUSec",
+	"NextElapseUSecRealtime", "NextElapseUSecMonotonic", "LastTriggerUSec",
+	"Persistent", "AccuracyUSec",
 	"RandomizedDelayUSec", "LoadState", "ActiveState", "SubState",
 	"UnitFileState", "FragmentPath",
 }

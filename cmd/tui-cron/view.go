@@ -711,25 +711,6 @@ func orNone(value string) string {
 	return value
 }
 
-// dialogDiffLines is the most diff the confirm dialog will show. The kit's
-// dialog does not scroll, so a diff longer than the terminal would push its own
-// title and the command preview off the screen — and the command preview is the
-// one thing that must never be missed.
-const dialogDiffLines = 14
-
-// diffForDialog trims a diff to what fits above the command preview, saying how
-// much was left out.
-func (a *app) diffForDialog(diff string) string {
-	budget := max(min(a.height-16, dialogDiffLines), 4)
-	lines := strings.Split(strings.TrimSuffix(diff, "\n"), "\n")
-	if len(lines) <= budget {
-		return diff
-	}
-	kept := append([]string{}, lines[:budget]...)
-	return strings.Join(kept, "\n") + "\n… " +
-		strconv.Itoa(len(lines)-budget) + " more diff lines"
-}
-
 // shortHelpKeys is the single-line hint bar, which changes with the screen
 // because the keys that do anything change with it.
 func (a *app) shortHelpKeys() []ui.KeyHint {

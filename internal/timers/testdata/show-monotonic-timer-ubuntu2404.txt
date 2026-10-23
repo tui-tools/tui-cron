@@ -1,0 +1,16 @@
+Unit=systemd-tmpfiles-clean.service
+TimersMonotonic={ OnUnitActiveUSec=1d ; next_elapse=0 }
+TimersMonotonic={ OnBootUSec=15min ; next_elapse=1h 59min 14.739759s }
+NextElapseUSecRealtime=
+NextElapseUSecMonotonic=1h 59min 14.739759s
+LastTriggerUSec=
+AccuracyUSec=1min
+RandomizedDelayUSec=0
+Persistent=no
+Id=systemd-tmpfiles-clean.timer
+Description=Daily Cleanup of Temporary Directories
+LoadState=loaded
+ActiveState=active
+SubState=waiting
+FragmentPath=/usr/lib/systemd/system/systemd-tmpfiles-clean.timer
+UnitFileState=static

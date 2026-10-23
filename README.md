@@ -263,6 +263,12 @@ row to select, and therefore no way to enable, run or remove it. Such a timer
 shows up on the list straight away, with `not armed` in place of a next run
 until `E` enables it.
 
+A timer that fires relative to an event rather than the clock — `OnBootSec=`,
+`OnUnitActiveSec=` and the like, such as `systemd-tmpfiles-clean.timer` — gets
+its next run too. systemd publishes that elapse on the monotonic clock
+(`NextElapseUSecMonotonic`) rather than as a date, and the tool converts it
+the way `systemctl list-timers` does, so the two show the same time.
+
 ### The timers this tool wrote are the only ones it will remove
 
 A timer created with `c` or converted with `t` gets a header in both of its
@@ -343,8 +349,10 @@ of the timer, because a reload alone would leave it armed on the old schedule.
 
 ## Changing a crontab, through cron's own interface
 
-A crontab is never edited as a file. `/var/spool/cron` is cron's own directory,
-and writing into it behind cron's back skips the syntax check and, on Debian,
+A crontab is never edited as a file. The spool — `/var/spool/cron` with
+cronie (Fedora, RHEL, Arch), `/var/spool/cron/crontabs` with Debian's and
+Ubuntu's cron, read from the machine rather than assumed — is cron's own
+directory, and writing into it behind cron's back skips the syntax check and, on Debian,
 the ownership rules cron enforces — so `crontab <file>` is what runs, which is
 what `crontab -e` runs too.
 
@@ -391,9 +399,10 @@ user field where the format has one, and the command.
 
 ## Converting a cron line to a timer
 
-`t` generates a `.timer` and `.service` pair from the selected cron line,
-previews both, writes them to `/etc/systemd/system` — and **does not enable the
-timer**, and does not touch the cron line. Two schedulers running the same job
+`t` generates a `.timer` and `.service` pair from the selected cron line and
+previews both, whole (a dialog taller than the terminal scrolls with `j`/`k`
+and `pgup`/`pgdn`, and says so). It writes them to `/etc/systemd/system`, and
+it **does not enable the timer** and does not touch the cron line. Two schedulers running the same job
 is worse than one running it in the old place, so the conversion is a draft to
 read, enable, and then remove the line behind. Doing any of that for you would
 be doing the dangerous half first.
@@ -509,7 +518,7 @@ Every one of these is previewed and confirmed first.
 | --- | --- |
 | `e` on a timer | `systemd-analyze calendar <expr>` (a read, before the question), then `install -d -m 755 /etc/systemd/system/<t>.timer.d`, `install -m 644 <staged> …/90-tui-cron.conf`, `systemctl daemon-reload`, `systemctl restart <t>.timer` |
 | `e` on the command of a timer this tool wrote | `install -d -m 755 /etc/systemd/system/<n>.service.d`, `install -m 644 <staged> …/90-tui-cron.conf`, `systemctl daemon-reload` — the timer is not restarted, because the timer did not change |
-| `d` on a timer this tool wrote | `systemctl disable --now <t>.timer`, `rm -f -- /etc/systemd/system/<t>.timer`, the same for `<n>.service` and for any drop-in this tool left, then `systemctl daemon-reload` |
+| `d` on a timer this tool wrote | `systemctl disable --now <t>.timer`, `rm -f -- /etc/systemd/system/<t>.timer`, the same for `<n>.service` and for any drop-in this tool left, `rmdir --ignore-fail-on-non-empty -- /etc/systemd/system/<t>.timer.d` for the directory that drop-in was in (removed only when nothing else is in it), then `systemctl daemon-reload` |
 | `e`/`a`/`d` on a cron line | `crontab <staged file>` for your own table, `crontab -u <who> <staged file>` for another account's, or `install -m 644 <staged> /etc/cron.d/<name>` for a system one |
 | `c` / `t` | `install -m 644 <staged> /etc/systemd/system/<name>.service`, the same for `.timer`, then `systemctl daemon-reload` — and nothing else: the timer is **not** enabled |
 | `E` / `D` | `systemctl enable` / `systemctl disable <t>.timer` |
@@ -520,10 +529,10 @@ Nothing else. A timer in your own manager gets `--user` in front of the verb,
 read from the job rather than assumed. There is no code path that writes to
 `/etc` other than those `install` commands, each with a destination this tool
 checks rather than a parameter it trusts, and none of them can name a unit file
-a distribution shipped. The `rm` commands are the same: the path is assembled
-from a checked unit name and can only ever be a file directly inside
-`/etc/systemd/system`, so there is no way to point one at `/usr/lib` or
-anywhere else at all.
+a distribution shipped. The `rm` and `rmdir` commands are the same: the path is
+assembled from a checked unit name and can only ever be a unit file, or a
+`<unit>.d` drop-in directory, directly inside `/etc/systemd/system`, so there is
+no way to point one at `/usr/lib` or anywhere else at all.
 
 ## Keys
 
@@ -547,6 +556,11 @@ anywhere else at all.
 | `R` | Re-read both schedulers |
 | `?` | Help |
 | `q` | Quit |
+
+In a **confirm dialog**: `y` runs what it shows and `n` cancels. A change taller
+than the terminal — a conversion diffs two whole units — scrolls with `j`/`k`,
+`pgup`/`pgdn` and `home`/`end`, and a line under it says which part is on
+screen; the command preview is at the end.
 
 In a **form**: `tab` moves between fields, `←`/`→` cycles a value, `space` opens
 the list, `enter` builds the change and shows it, `esc` cancels. The reading

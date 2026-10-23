@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tui-tools/tui-cron/internal/schedule"
 )
@@ -349,4 +350,94 @@ func contains(list []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// TestMonotonicTimerGetsANextRun is the systemd-tmpfiles-clean.timer of an
+// Ubuntu 24.04 machine (systemd 255): OnBootSec=15min, armed and waiting, and
+// `systemctl list-timers` shows it firing in fourteen minutes. `systemctl show`
+// leaves NextElapseUSecRealtime empty for it and carries the elapse in
+// NextElapseUSecMonotonic instead, so a next run read from the realtime
+// property alone is empty.
+func TestMonotonicTimerGetsANextRun(t *testing.T) {
+	p := ParseProperties(fixture(t, "show-monotonic-timer-ubuntu2404.txt"))
+	job := JobFromTimer(p, schedule.KindTimer, "root")
+	if !job.Next.IsZero() {
+		t.Fatalf("the realtime property alone gave a next run: %v", job.Next)
+	}
+
+	// The fixture was captured 1h 44min 9s after boot; the elapse is at
+	// 1h 59min 14.74s, so the timer fires 15min 5s later.
+	now := time.Date(2026, 10, 23, 18, 23, 0, 0, time.UTC)
+	mono := time.Hour + 44*time.Minute + 9*time.Second
+	ApplyMonotonicNext(&job, p, now, mono)
+	want := now.Add(15*time.Minute + 5*time.Second)
+	if !job.Next.Equal(want) {
+		t.Errorf("next run = %v, want %v", job.Next, want)
+	}
+	if job.NextNote != "" {
+		t.Errorf("a timer with a next run still carries a note: %q", job.NextNote)
+	}
+	if !strings.Contains(job.Raw, "NextElapseUSecMonotonic=1h 59min 14.739759s") {
+		t.Errorf("the detail does not show what was read:\n%s", job.Raw)
+	}
+}
+
+// TestMonotonicNextLeavesTheUnsetValuesAlone: "0" is what a calendar-only
+// timer reports and "infinity" what an inactive one does. Neither is a time.
+func TestMonotonicNextLeavesTheUnsetValuesAlone(t *testing.T) {
+	now := time.Date(2026, 10, 23, 18, 0, 0, 0, time.UTC)
+	for _, value := range []string{"", "0", "infinity", "soon", "5parsecs"} {
+		job := schedule.Job{NextNote: "not armed"}
+		p := ParseProperties("NextElapseUSecMonotonic=" + value + "\n")
+		ApplyMonotonicNext(&job, p, now, time.Hour)
+		if !job.Next.IsZero() || job.NextNote != "not armed" {
+			t.Errorf("%q changed the job: next %v, note %q",
+				value, job.Next, job.NextNote)
+		}
+	}
+}
+
+// TestMonotonicAndCalendarTakeTheEarlier: a timer with both triggers fires at
+// whichever comes first, which is how list-timers reports it too.
+func TestMonotonicAndCalendarTakeTheEarlier(t *testing.T) {
+	now := time.Date(2026, 10, 23, 18, 0, 0, 0, time.UTC)
+	p := ParseProperties("NextElapseUSecMonotonic=2h\n")
+
+	calendarFirst := schedule.Job{Next: now.Add(30 * time.Minute)}
+	ApplyMonotonicNext(&calendarFirst, p, now, time.Hour)
+	if !calendarFirst.Next.Equal(now.Add(30 * time.Minute)) {
+		t.Errorf("the later monotonic elapse replaced the calendar one: %v",
+			calendarFirst.Next)
+	}
+
+	monotonicFirst := schedule.Job{Next: now.Add(3 * time.Hour)}
+	ApplyMonotonicNext(&monotonicFirst, p, now, time.Hour)
+	if !monotonicFirst.Next.Equal(now.Add(time.Hour)) {
+		t.Errorf("the earlier monotonic elapse was ignored: %v", monotonicFirst.Next)
+	}
+}
+
+// TestParseTimespan reads systemd's span format, every unit it writes.
+func TestParseTimespan(t *testing.T) {
+	for value, want := range map[string]time.Duration{
+		"15min":               15 * time.Minute,
+		"1h 59min 14.739759s": time.Hour + 59*time.Minute + 14739759*time.Microsecond,
+		"1d":                  24 * time.Hour,
+		"2w 3d 4h":            (17*24 + 4) * time.Hour,
+		"1month":              2629800 * time.Second,
+		"1y 1month":           (31557600 + 2629800) * time.Second,
+		"500ms":               500 * time.Millisecond,
+		"250us":               250 * time.Microsecond,
+		"  3min 7s  ":         3*time.Minute + 7*time.Second,
+	} {
+		got, ok := ParseTimespan(value)
+		if !ok || got != want {
+			t.Errorf("ParseTimespan(%q) = %v, %v; want %v", value, got, ok, want)
+		}
+	}
+	for _, value := range []string{"", "0", "infinity", "n/a", "min", "3", "3x", "-5s"} {
+		if got, ok := ParseTimespan(value); ok {
+			t.Errorf("ParseTimespan(%q) = %v, want no value", value, got)
+		}
+	}
 }

@@ -613,7 +613,14 @@ func deleteTimerPlan(job schedule.Job, timerText, serviceText string,
 		if dropInErr != nil {
 			return schedule.WritePlan{}, dropInErr
 		}
-		commands = append(commands, remove)
+		// The directory goes too, when nothing else is in it: the drop-in was
+		// what this tool put there, and an empty <unit>.d left behind is not
+		// "removed what it wrote".
+		removeDir, dirErr := timers.BuildRemoveDropInDir(unit)
+		if dirErr != nil {
+			return schedule.WritePlan{}, dirErr
+		}
+		commands = append(commands, remove, removeDir)
 	}
 	commands = append(commands, timers.BuildDaemonReload(job))
 
@@ -662,7 +669,7 @@ func (r *Real) deleteTimer(job schedule.Job) (schedule.WritePlan, error) {
 	}
 	var dropIns []string
 	for _, unit := range []string{job.Unit, job.Service} {
-		if r.timers.DropInContent(unit) != "" {
+		if r.timers.DropInContent(unit) != "" || r.timers.HasDropInDir(unit) {
 			dropIns = append(dropIns, unit)
 		}
 	}

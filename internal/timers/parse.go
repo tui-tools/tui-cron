@@ -3,6 +3,7 @@ package timers
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -231,7 +232,8 @@ func nextNote(p Properties, job schedule.Job) string {
 func rawTimerLines(p Properties) []string {
 	var lines []string
 	for _, key := range []string{"TimersCalendar", "TimersMonotonic",
-		"NextElapseUSecRealtime", "LastTriggerUSec", "Persistent",
+		"NextElapseUSecRealtime", "NextElapseUSecMonotonic", "LastTriggerUSec",
+		"Persistent",
 		"AccuracyUSec", "RandomizedDelayUSec"} {
 		for _, value := range p.All(key) {
 			if value == "" {
@@ -362,6 +364,81 @@ func ParseTimestamp(value string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// timespanUnits are the units systemd's format_timespan writes, in seconds.
+// A month and a year are systemd's own averages, not calendar ones.
+var timespanUnits = map[string]float64{
+	"y":     31557600,
+	"month": 2629800,
+	"w":     604800,
+	"d":     86400,
+	"h":     3600,
+	"min":   60,
+	"s":     1,
+	"ms":    1e-3,
+	"us":    1e-6,
+	"µs":    1e-6,
+}
+
+// ParseTimespan reads a span the way `systemctl show` prints a USec property
+// that is not a wall-clock timestamp — "1h 59min 14.739759s". It reports false
+// for "0" and "infinity", which are how systemd says the value is not set, and
+// for anything it does not understand: a misread span is a wrong next run, and
+// no next run is the honest answer to a format this tool does not know.
+func ParseTimespan(value string) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0" || value == "infinity" {
+		return 0, false
+	}
+	var total float64
+	for _, token := range strings.Fields(value) {
+		split := strings.IndexFunc(token, func(r rune) bool {
+			return (r < '0' || r > '9') && r != '.'
+		})
+		if split <= 0 {
+			return 0, false
+		}
+		number, err := strconv.ParseFloat(token[:split], 64)
+		if err != nil {
+			return 0, false
+		}
+		unit, ok := timespanUnits[token[split:]]
+		if !ok {
+			return 0, false
+		}
+		total += number * unit
+	}
+	if total <= 0 {
+		return 0, false
+	}
+	return time.Duration(math.Round(total * float64(time.Second))), true
+}
+
+// ApplyMonotonicNext fills in the next run of a timer whose next elapse is on
+// the monotonic clock — OnBootSec, OnStartupSec, OnUnitActiveSec and the like.
+//
+// systemd publishes that elapse as NextElapseUSecMonotonic, a span since boot,
+// and NextElapseUSecRealtime stays empty, so a timer that `systemctl
+// list-timers` shows firing in fourteen minutes would otherwise read as having
+// no next run. The conversion is the one list-timers itself makes: the wall
+// clock now, plus how far the elapse is ahead of the monotonic clock now. A
+// timer with both kinds of trigger fires at whichever comes first, so the
+// earlier of the two wins, again as list-timers does it.
+//
+// nowMono is the CLOCK_MONOTONIC reading taken together with now; the caller
+// reads the clock so this stays a function of its arguments.
+func ApplyMonotonicNext(job *schedule.Job, p Properties, now time.Time,
+	nowMono time.Duration) {
+	elapse, ok := ParseTimespan(p.Get("NextElapseUSecMonotonic"))
+	if !ok || nowMono <= 0 {
+		return
+	}
+	next := now.Add(elapse - nowMono).Truncate(time.Second)
+	if !job.Next.IsZero() && job.Next.Before(next) {
+		return
+	}
+	job.Next, job.NextNote = next, ""
 }
 
 // ParseNormalized reads the normalized form out of `systemd-analyze calendar`,

@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tui-tools/tui-cron/internal/schedule"
 	"github.com/tui-tools/tui-kit/runner"
@@ -53,11 +54,58 @@ var AnacronDirs = []string{
 	"/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly",
 }
 
+// The two places the per-user crontabs live. cronie (Fedora, RHEL, Arch) keeps
+// them directly in /var/spool/cron; Debian's cron, and so Ubuntu's, keeps them
+// one level down, in /var/spool/cron/crontabs.
+const (
+	SpoolDirCronie = "/var/spool/cron"
+	SpoolDirDebian = "/var/spool/cron/crontabs"
+)
+
 // SpoolDirs are where the per-user crontabs live: Fedora and Arch use the
 // first, Debian and Ubuntu the second. The directory is listed only to learn
 // *which* users have one — the tables themselves are always read back through
 // `crontab -u`, never by opening the file.
-var SpoolDirs = []string{"/var/spool/cron", "/var/spool/cron/crontabs"}
+var SpoolDirs = []string{SpoolDirCronie, SpoolDirDebian}
+
+// spoolDirOnce caches the layout: it is a property of the installed cron, and
+// it does not change while the tool runs.
+var (
+	spoolDirOnce sync.Once
+	spoolDir     string
+)
+
+// SpoolDir is the directory this machine's cron keeps per-user tables in.
+//
+// It is read from the machine rather than assumed: Debian's cron package
+// creates /var/spool/cron/crontabs, and cronie has no such directory. A plain
+// stat answers it without privileges on both — Debian's /var/spool/cron is
+// world-searchable, and on cronie's, which is not, the stat fails and the
+// answer is the cronie layout anyway.
+func SpoolDir() string {
+	spoolDirOnce.Do(func() { spoolDir = spoolDirFrom(isDir) })
+	return spoolDir
+}
+
+// spoolDirFrom picks the layout from a directory probe, so a test can answer
+// the probe for either distribution family.
+func spoolDirFrom(dirExists func(string) bool) string {
+	if dirExists(SpoolDirDebian) {
+		return SpoolDirDebian
+	}
+	return SpoolDirCronie
+}
+
+// isDir reports whether a path exists and is a directory.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// TablePathFor is where this machine's cron keeps one account's table: the
+// path the detail screen, the confirm dialog and a converted timer's
+// Description name. It is never opened.
+func TablePathFor(owner string) string { return TablePathIn(SpoolDir(), owner) }
 
 // unitCandidates are the names the cron daemon's unit goes by: `crond` on
 // Fedora and Arch, `cron` on Debian and Ubuntu. Which one this machine uses is

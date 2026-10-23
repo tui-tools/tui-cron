@@ -65,6 +65,9 @@ func TestDeletePlanUnloadsBeforeItRemoves(t *testing.T) {
 		"rm -f -- /etc/systemd/system/mirror-sync.timer",
 		"rm -f -- /etc/systemd/system/mirror-sync.service",
 		"rm -f -- /etc/systemd/system/mirror-sync.timer.d/90-tui-cron.conf",
+		// The directory install -d made for the drop-in goes with it, and
+		// only when nothing else is in it.
+		"rmdir --ignore-fail-on-non-empty -- /etc/systemd/system/mirror-sync.timer.d",
 		"systemctl daemon-reload",
 	}
 	if len(plan.Commands) != len(want) {

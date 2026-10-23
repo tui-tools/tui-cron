@@ -407,16 +407,21 @@ func TestConvertingACronLineWritesAnUnenabledTimer(t *testing.T) {
 		t.Errorf("the generated timer does not carry the converted schedule:\n%s",
 			a.confirm.Body)
 	}
-	// Two whole units is more diff than a dialog can hold, so it is trimmed
-	// from the bottom and says how much was left out. What must survive the
-	// trim is the timer, because that is the half carrying the schedule.
-	if !strings.Contains(a.confirm.Body, "more diff lines") {
-		t.Errorf("a diff longer than the dialog was not trimmed:\n%s", a.confirm.Body)
+	// Both units are in the dialog whole: the user confirms the service as
+	// much as the timer, so neither may be cut off.
+	if strings.Contains(a.confirm.Body, "more diff lines") {
+		t.Errorf("the diff was trimmed:\n%s", a.confirm.Body)
+	}
+	for _, want := range []string{"[Timer]", "[Service]", "ExecStart="} {
+		if !strings.Contains(a.confirm.Body, want) {
+			t.Errorf("the dialog does not show %q:\n%s", want, a.confirm.Body)
+		}
 	}
 	if strings.Index(a.confirm.Body, ".timer") >
 		strings.Index(a.confirm.Body, ".service") {
 		t.Errorf("the service is diffed above the timer:\n%s", a.confirm.Body)
 	}
+	assertDialogScrollsToTheEnd(t, a, "ExecStart=")
 
 	drain(t, a, press(a, "y"))
 	for _, cmd := range backend.Ran() {
@@ -857,6 +862,51 @@ func TestDeletingOurOwnTimerAsksForTheNameFirst(t *testing.T) {
 	}
 }
 
+// TestDeletingATimerAfterAScheduleChangeLeavesNoDirectory: a schedule change
+// creates <unit>.d with install -d and puts the drop-in in it. Deleting the
+// timer afterwards has to take both away, or an empty directory is left in
+// /etc/systemd/system that nothing explains.
+func TestDeletingATimerAfterAScheduleChangeLeavesNoDirectory(t *testing.T) {
+	a, _ := newTestApp(t)
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+	drain(t, a, press(a, "e"))
+	if a.mode != modeForm {
+		t.Fatalf("e did not open the editor (status: %s)", a.status)
+	}
+	a.form.fields[0].input.SetValue("*-*-* 03:15:00")
+	a.form.reread()
+	drain(t, a, press(a, "enter"))
+	if !strings.Contains(a.confirm.Command,
+		"install -d -m 755 /etc/systemd/system/mirror-sync.timer.d") {
+		t.Fatalf("the schedule change does not create the directory:\n%s",
+			a.confirm.Command)
+	}
+	drain(t, a, press(a, "y"))
+
+	selectJob(t, a, screenTimers, "mirror-sync.timer")
+	drain(t, a, press(a, "d"))
+	drain(t, a, press(a, "mirror-sync.timer"))
+	drain(t, a, press(a, "enter"))
+	if a.mode != modeConfirm {
+		t.Fatalf("the typed name did not open the dialog (status: %s)", a.status)
+	}
+	for _, line := range []string{
+		"rm -f -- /etc/systemd/system/mirror-sync.timer.d/90-tui-cron.conf",
+		"rmdir --ignore-fail-on-non-empty -- /etc/systemd/system/mirror-sync.timer.d",
+	} {
+		if !strings.Contains(a.confirm.Command, line) {
+			t.Errorf("the preview is missing %q:\n%s", line, a.confirm.Command)
+		}
+	}
+	// The directory goes after the file in it, and before systemd re-reads.
+	rmFile := strings.Index(a.confirm.Command, "90-tui-cron.conf")
+	rmDir := strings.Index(a.confirm.Command, "rmdir")
+	reload := strings.Index(a.confirm.Command, "daemon-reload")
+	if rmFile >= rmDir || rmDir >= reload {
+		t.Errorf("the deletion is out of order:\n%s", a.confirm.Command)
+	}
+}
+
 // TestATypoDeletesNothing: the prompt is a gate, not a formality.
 func TestATypoDeletesNothing(t *testing.T) {
 	a, backend := newTestApp(t)
@@ -1070,5 +1120,31 @@ func TestWithoutRootTheAddFormHasNoTarget(t *testing.T) {
 	}
 	if !strings.Contains(form.title, "ana") {
 		t.Errorf("form title = %q, want it to name this account's table", form.title)
+	}
+}
+
+// assertDialogScrollsToTheEnd renders the open confirm dialog at the test
+// terminal's size and checks that a body too tall for it scrolls: the first
+// screen says how to scroll, and scrolling to the end reaches the last unit
+// line and the command preview. A body that was simply clipped would never show
+// either.
+func assertDialogScrollsToTheEnd(t *testing.T, a *app, last string) {
+	t.Helper()
+	first := a.View()
+	if !strings.Contains(first, "scroll") {
+		t.Fatalf("a body taller than the terminal shows no scroll hint:\n%s", first)
+	}
+	if strings.Contains(first, last) {
+		t.Fatalf("the test body fits the terminal, so it proves nothing:\n%s", first)
+	}
+	a.confirm.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	end := a.View()
+	for _, want := range []string{last, "Command to run:", "daemon-reload"} {
+		if !strings.Contains(end, want) {
+			t.Errorf("scrolled to the end, the dialog does not show %q:\n%s", want, end)
+		}
+	}
+	if a.mode != modeConfirm || a.confirm.Done {
+		t.Fatalf("scrolling resolved the dialog")
 	}
 }

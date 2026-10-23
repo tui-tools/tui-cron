@@ -228,6 +228,29 @@ fi
 check "the schedules were read" "$bin --check" '"Schedule": "[^"]+"'
 check "a schedule was read back in English" "$bin --check" '"Explain": "[A-Z][^"]+"'
 
+# 4b. Every system timer systemd gives a next elapse has one in the tool too,
+#     and no other does. The monotonic timers are the ones this catches:
+#     OnBootSec/OnUnitActiveSec timers such as systemd-tmpfiles-clean.timer
+#     publish their elapse in NextElapseUSecMonotonic and leave the realtime
+#     property empty, and a tool that reads only the realtime one shows them
+#     with no next run while `list-timers` shows them firing in minutes. The
+#     first .timer on each list-timers row is the UNIT column; ACTIVATES is the
+#     service.
+want_next=$(systemctl list-timers --all --no-legend --no-pager 2>/dev/null |
+  awk '$1 != "-"' | grep -oE '[^ ]+\.timer' | awk '!seen[$0]++' | sort | tr '\n' ' ')
+got_next=$(awk '
+  /"ID":/   { unit = ""; if ($2 ~ /^"timer:/) { unit = $2; gsub(/^"timer:|",?$/, "", unit) } }
+  /"Next":/ { if (unit != "" && $2 !~ /^"0001-/) print unit }
+' <<<"$report" | sort -u | tr '\n' ' ')
+if [[ $want_next == "$got_next" ]]; then
+  printf 'PASS  the timers with a next run match list-timers (%s)\n' "$(wc -w <<<"$want_next")"
+  pass=$((pass + 1))
+else
+  printf 'FAIL  timers with a next run: list-timers has [%s], the tool [%s]\n' \
+    "$want_next" "$got_next"
+  fail=$((fail + 1))
+fi
+
 # 5. cron: present or absent, coherently. Both are normal machines and the two
 #    fields must agree with each other and with the machine.
 case "$cron" in
