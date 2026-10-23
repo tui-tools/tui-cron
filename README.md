@@ -263,6 +263,12 @@ row to select, and therefore no way to enable, run or remove it. Such a timer
 shows up on the list straight away, with `not armed` in place of a next run
 until `E` enables it.
 
+A timer that fires relative to an event rather than the clock — `OnBootSec=`,
+`OnUnitActiveSec=` and the like, such as `systemd-tmpfiles-clean.timer` — gets
+its next run too. systemd publishes that elapse on the monotonic clock
+(`NextElapseUSecMonotonic`) rather than as a date, and the tool converts it
+the way `systemctl list-timers` does, so the two show the same time.
+
 ### The timers this tool wrote are the only ones it will remove
 
 A timer created with `c` or converted with `t` gets a header in both of its

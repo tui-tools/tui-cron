@@ -35,6 +35,7 @@ import (
 	"github.com/tui-tools/tui-cron/internal/schedule"
 	"github.com/tui-tools/tui-kit/compat"
 	"github.com/tui-tools/tui-kit/runner"
+	"golang.org/x/sys/unix"
 )
 
 // FeatureTimersJSON is `systemctl list-timers --output=json`, which arrived in
@@ -315,9 +316,13 @@ func (b *Backend) loadManager(ctx context.Context, user bool) ([]schedule.Job, e
 		if showErr != nil {
 			continue
 		}
-		job := JobFromTimer(ParseProperties(out), kind, owner)
+		properties := ParseProperties(out)
+		job := JobFromTimer(properties, kind, owner)
 		if job.ID == "" {
 			continue
+		}
+		if now, mono, ok := clockNow(); ok {
+			ApplyMonotonicNext(&job, properties, now, mono)
 		}
 		if job.Service != "" {
 			if serviceOut, serviceErr := b.show(ctx, user, job.Service,
@@ -565,6 +570,19 @@ func (b *Backend) DropInContent(unit string) string {
 	return string(raw)
 }
 
+// clockNow reads the wall clock and CLOCK_MONOTONIC together, which is what a
+// monotonic next elapse is converted with. systemd reports that elapse on
+// CLOCK_MONOTONIC (it maps a CLOCK_BOOTTIME timer onto it before publishing),
+// and a container shares the host kernel's clock, so the reading here and the
+// one systemd made agree.
+func clockNow() (time.Time, time.Duration, bool) {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
+		return time.Time{}, 0, false
+	}
+	return time.Now(), time.Duration(ts.Nano()), true
+}
+
 // UnitContent returns what a unit file in UnitDir says today, empty when there
 // is none. Like DropInContent it is read unprivileged: /etc/systemd/system is
 // world readable on every distribution this tool targets, and the text is what
@@ -596,7 +614,8 @@ func currentUser() string {
 // is the output of the command the tool really runs.
 var timerProperties = []string{
 	"Id", "Unit", "Description", "TimersCalendar", "TimersMonotonic",
-	"NextElapseUSecRealtime", "LastTriggerUSec", "Persistent", "AccuracyUSec",
+	"NextElapseUSecRealtime", "NextElapseUSecMonotonic", "LastTriggerUSec",
+	"Persistent", "AccuracyUSec",
 	"RandomizedDelayUSec", "LoadState", "ActiveState", "SubState",
 	"UnitFileState", "FragmentPath",
 }
