@@ -1,3 +1,4 @@
 {"backend": "systemd", "date": "2026-08-30", "distro": "ubuntu-24.04", "result": "pass", "suite": "smoke", "tool": "tui-cron", "version": "255"}
 {"backend": "systemd", "date": "2026-08-30", "distro": "fedora-44", "result": "pass", "suite": "smoke", "tool": "tui-cron", "version": "259"}
 {"backend": "systemd", "date": "2026-08-30", "distro": "omarchy-server-4.0.1", "result": "pass", "suite": "smoke", "tool": "tui-cron", "version": "261"}
+{"backend": "systemd", "date": "2026-11-18", "distro": "omarchy-server-4.0.2", "result": "pass", "suite": "smoke", "tool": "tui-cron", "version": "262"}

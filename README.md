@@ -708,7 +708,7 @@ hidden; one below the minimum is marked as such and the tool still runs.
 | Binary | `systemctl` |
 | Version read with | `systemctl --version` |
 | Minimum | 245 |
-| Tested | `255`, `259`, `261` |
+| Tested | `255`, `259`, `261`, `262` |
 | Version-gated features | `timers-json` (since 250) |
 
 | Versions | What changes |
