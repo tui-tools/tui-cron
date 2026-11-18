@@ -403,7 +403,7 @@ fi
 #    tool reports them and still exits 0. A machine whose backup has been broken
 #    for a month must not make this suite fail.
 check "the findings are counted" "$bin --check" '"failedCount": [0-9]+'
-check "the Persistent warnings are counted" "$bin --check" '"persistentWarnings": [0-9]+'
+check "the Persistent warnings are counted" "$bin --check" '"needPersistentCount": [0-9]+'
 
 # 8. --check must never change anything. The drop-in this tool writes must not
 #    exist because of a read, and no crontab may have been touched.
