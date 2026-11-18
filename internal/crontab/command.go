@@ -83,6 +83,22 @@ func BuildListArgv(owner, me string) ([]string, error) {
 	return []string{"crontab", "-u", owner, "-l"}, nil
 }
 
+// OwnTable reports whether a crontab argv acts on the caller's own table, which
+// is every crontab invocation without -u. Those run without the escalation
+// prefix: crontab picks the table from the user it runs as, so under sudo the
+// same argv would read or replace root's.
+func OwnTable(argv []string) bool {
+	if len(argv) == 0 || argv[0] != "crontab" {
+		return false
+	}
+	for _, arg := range argv[1:] {
+		if arg == "-u" {
+			return false
+		}
+	}
+	return true
+}
+
 // BuildInstallTable replaces one account's crontab with a staged file.
 //
 // `crontab <file>` is the only supported way to change a table. It runs cron's

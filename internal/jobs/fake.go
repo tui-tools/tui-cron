@@ -418,7 +418,13 @@ func (f *Fake) Capabilities() schedule.Capabilities {
 }
 
 // Preview renders the command line the real backend would run.
-func (f *Fake) Preview(cmd schedule.Command) string { return f.run.Preview(cmd) }
+func (f *Fake) Preview(cmd schedule.Command) string {
+	// Your own crontab is changed without escalating, as on a real machine.
+	if crontab.OwnTable(cmd.Argv) {
+		return cmd.String()
+	}
+	return f.run.Preview(cmd)
+}
 
 // Load returns the sample machine.
 func (f *Fake) Load(context.Context) (schedule.Model, error) { return f.model, nil }

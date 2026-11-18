@@ -312,7 +312,9 @@ func TestEditingACronLineReplacesTheWholeTable(t *testing.T) {
 	if !strings.Contains(a.confirm.Body, "+*/10 * * * * /usr/local/bin/check-queue") {
 		t.Errorf("the diff does not show the new line:\n%s", a.confirm.Body)
 	}
-	if a.confirm.Command != "sudo -n crontab /tmp/tui-cron/ana" {
+	// Your own table is replaced by crontab run as you, never through sudo:
+	// under sudo the same argv would replace root's table.
+	if a.confirm.Command != "crontab /tmp/tui-cron/ana" {
 		t.Errorf("previewed %q", a.confirm.Command)
 	}
 

@@ -141,10 +141,14 @@ const installHint = "install the cronie or cron package; " +
 
 // Backend drives cron on the host.
 type Backend struct {
-	crontab   *runner.Runner
-	install   *runner.Runner
-	journal   *runner.Runner
-	systemctl *runner.Runner
+	crontab *runner.Runner
+	// ownCrontab runs crontab without the escalation prefix. Your own table is
+	// `crontab <file>` as you: run through sudo, the same argv installs root's
+	// table instead, and the job would run as root.
+	ownCrontab *runner.Runner
+	install    *runner.Runner
+	journal    *runner.Runner
+	systemctl  *runner.Runner
 }
 
 // New locates the binaries. sudoPrefix comes from the configuration
@@ -184,6 +188,14 @@ func New(sudoPrefix []string) *Backend {
 		}
 		*spec.target = r
 	}
+	if own, err := runner.New(runner.Options{
+		Bin:             "crontab",
+		SearchPaths:     searchPaths["crontab"],
+		InstallHint:     installHint,
+		PrivilegedReads: &unprivileged,
+	}); err == nil {
+		b.ownCrontab = own
+	}
 	return b
 }
 
@@ -220,6 +232,9 @@ func (b *Backend) runnerFor(cmd schedule.Command) *runner.Runner {
 	}
 	switch cmd.Argv[0] {
 	case "crontab":
+		if OwnTable(cmd.Argv) && b.ownCrontab != nil {
+			return b.ownCrontab
+		}
 		return b.crontab
 	case "install":
 		return b.install
