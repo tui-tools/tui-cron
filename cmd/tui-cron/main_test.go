@@ -101,7 +101,7 @@ func TestCheckReportsTheState(t *testing.T) {
 		`"cron.d": 2`,
 		`"anacron-dir": 1`,
 		`"failedCount": 1`,
-		`"persistentWarnings": 1`,
+		`"needPersistentCount": 1`,
 		`"timersAvailable": true`,
 		`"cronInstalled": true`,
 		`"cronRunning": true`,

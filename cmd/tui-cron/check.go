@@ -59,7 +59,7 @@ type checkReport struct {
 	Failed          []jobReport `json:"failed"`
 	NeedPersistent  []jobReport `json:"needPersistent"`
 	FailedCount     int         `json:"failedCount"`
-	PersistentCount int         `json:"persistentWarnings"`
+	PersistentCount int         `json:"needPersistentCount"`
 
 	// Timers and Cron are what each scheduler said about itself.
 	TimersAvailable     bool   `json:"timersAvailable"`
