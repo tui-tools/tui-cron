@@ -776,8 +776,10 @@ widgets, the config loader and the command runner shared by the whole family.
   typed before the dialog appears, and why it only ever applies to the two files
   this tool wrote itself.
 - Reading needs no privileges at all: `systemctl show`, `crontab -l` for your
-  own table and the journal all answer to any user. Only a change escalates,
-  through `sudo -n`, which never prompts.
+  own table and the journal all answer to any user. Changing your own table
+  does not escalate either: `crontab <file>` picks the table from the user it
+  runs as, so it runs as you. Every other change escalates, through `sudo -n`,
+  which never prompts.
 - `tui-cron` re-reads both schedulers after every change, so what you see is
   what the machine reports, not what the tool assumed.
 
