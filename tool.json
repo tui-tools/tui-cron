@@ -5,6 +5,8 @@
   "tagline": "Every scheduled job on one screen, systemd timers and cron together",
   "description": "A terminal UI for everything scheduled on a machine. systemd timers and cron are two schedulers with two syntaxes and two ways of reporting what happened; tui-cron puts them on one list — the name, the schedule as written, the next run, the last run and how it went.\n\nNext to every expression is what it means, in English. `17 3 * * 1` and `*-*-01..07 12:00:00` are both precise and neither is readable, and the mistakes people make with them are mistakes of reading. The reading comes from the tool's own describer, and the detail screen adds the next five runs as `systemd-analyze calendar` computes them.\n\nChanges are previewed. A timer's schedule goes to a drop-in, checked with `systemd-analyze calendar` first; the unit file is never rewritten. A crontab is replaced through `crontab <file>`, cron's own interface, with the diff on screen; as root, into another account's table or /etc/cron.d. A cron line can become a timer, written but not enabled. A timer this tool wrote says so in its files, and only those can be re-pointed or deleted.\n\nRun `tui-cron --demo` to drive a sample machine: every key works, every command is built and previewed for real, and nothing touches your system.",
   "category": "scheduling",
+  "stability": "stable",
+  "stableSince": "1.0.0",
   "homepage": "https://github.com/tui-tools/tui-cron",
   "repo": "https://github.com/tui-tools/tui-cron",
   "license": "MIT",
